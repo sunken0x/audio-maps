@@ -1,0 +1,1544 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1" />
+<title>Audio Maps — sunken0x</title>
+<meta name="description" content="Every Ethereum block has a sound. A generative audio-visual instrument by sunken0x — each block hash composes its own piano piece and moving artwork." />
+
+<!-- social share card. og:image + urls use sunken0x.art; finalize the domain at deploy. -->
+<meta property="og:type" content="website" />
+<meta property="og:site_name" content="Audio Maps" />
+<meta property="og:title" content="Audio Maps" />
+<meta property="og:description" content="Every Ethereum block has a sound. Paste a wallet and hear it." />
+<meta property="og:url" content="https://audiomaps.sunken0x.art/" />
+<meta property="og:image" content="https://audiomaps.sunken0x.art/cover.jpg" />
+<meta property="og:image:width" content="1200" />
+<meta property="og:image:height" content="630" />
+<meta name="twitter:card" content="summary_large_image" />
+<meta name="twitter:title" content="Audio Maps" />
+<meta name="twitter:description" content="Every Ethereum block has a sound. Paste a wallet and hear it." />
+<meta name="twitter:image" content="https://audiomaps.sunken0x.art/cover.jpg" />
+<meta name="twitter:creator" content="@sunken0x" />
+<meta name="theme-color" content="#efece4" />
+<style>
+  :root {
+    --cyan: #2ce1f5;
+    --magenta: #e224e7;
+    --bg: #000a25;
+    --panel: rgba(0, 5, 18, 0.78);
+    --panel-edge: rgba(44, 225, 245, 0.35);
+    --text: #f5e6ff;
+    --mute: rgba(245, 230, 255, 0.55);
+  }
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0; padding: 0;
+    width: 100%; height: 100%;
+    background: var(--bg);
+    color: var(--text);
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    overflow: hidden;
+    -webkit-font-smoothing: antialiased;
+  }
+  #stage {
+    position: fixed; inset: 0;
+    width: 100vw; height: 100vh;
+    cursor: pointer;
+  }
+  #scene { position: absolute; inset: 0; }
+  #scene canvas { display: block; width: 100%; height: 100%; }
+  #bloom {
+    position: absolute; inset: 0;
+    background: radial-gradient(circle at center,
+      rgba(226, 36, 231, 0.55) 0%,
+      rgba(226, 36, 231, 0.25) 35%,
+      rgba(226, 36, 231, 0.0) 70%);
+    mix-blend-mode: screen;
+    pointer-events: none;
+    opacity: 0;
+    transition: opacity 60ms linear;
+  }
+  #panel {
+    position: fixed;
+    top: 16px; left: 16px;
+    width: 360px;
+    max-height: calc(100vh - 32px);
+    overflow-y: auto;
+    background: var(--panel);
+    border: 1px solid var(--panel-edge);
+    border-radius: 6px;
+    padding: 14px 16px 18px;
+    backdrop-filter: blur(8px);
+    -webkit-backdrop-filter: blur(8px);
+    z-index: 10;
+    font-size: 12px;
+    line-height: 1.45;
+  }
+  #panel h1 {
+    margin: 0 0 4px 0;
+    font-size: 14px;
+    font-weight: 600;
+    letter-spacing: 1px;
+    color: var(--cyan);
+    text-transform: uppercase;
+  }
+  #panel .sub {
+    color: var(--mute);
+    margin-bottom: 12px;
+    font-size: 11px;
+  }
+  #panel hr {
+    border: none;
+    border-top: 1px dashed rgba(245, 230, 255, 0.18);
+    margin: 12px 0;
+  }
+  #panel label {
+    display: block;
+    margin: 8px 0 4px;
+    color: var(--mute);
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+  }
+  #panel input[type="range"] {
+    width: 100%;
+    accent-color: var(--magenta);
+  }
+  #panel input[type="text"], #panel select {
+    width: 100%;
+    background: rgba(0, 0, 0, 0.5);
+    border: 1px solid var(--panel-edge);
+    color: var(--text);
+    padding: 6px 8px;
+    border-radius: 3px;
+    font: inherit;
+    font-size: 11px;
+  }
+  #panel button {
+    background: var(--magenta);
+    border: none;
+    color: white;
+    padding: 9px 16px;
+    margin: 4px 4px 4px 0;
+    cursor: pointer;
+    border-radius: 3px;
+    font: inherit;
+    font-size: 12px;
+    font-weight: 600;
+    letter-spacing: 0.5px;
+    text-transform: uppercase;
+  }
+  #panel button.alt {
+    background: rgba(44, 225, 245, 0.18);
+    color: var(--cyan);
+    border: 1px solid var(--panel-edge);
+  }
+  #panel button:hover { filter: brightness(1.15); }
+  #panel button:active { transform: translateY(1px); }
+  #panel .row { display: flex; gap: 8px; align-items: center; }
+  #panel .row > * { flex: 1; }
+  #readout {
+    margin-top: 12px;
+    padding: 10px 12px;
+    background: rgba(0, 0, 0, 0.5);
+    border: 1px solid rgba(44, 225, 245, 0.22);
+    border-radius: 4px;
+    font-size: 11px;
+    line-height: 1.6;
+    white-space: pre-wrap;
+    word-break: break-all;
+    color: var(--cyan);
+  }
+  .chip {
+    display: inline-block;
+    padding: 2px 8px;
+    border-radius: 12px;
+    font-size: 10px;
+    margin-left: 4px;
+    background: rgba(44, 225, 245, 0.15);
+    border: 1px solid rgba(44, 225, 245, 0.3);
+    color: var(--cyan);
+  }
+  #hud {
+    position: fixed;
+    bottom: 14px; left: 14px;
+    color: var(--mute);
+    font: 10px ui-monospace, Menlo, monospace;
+    letter-spacing: 1.5px;
+    text-transform: uppercase;
+    line-height: 1.7;
+    pointer-events: none;
+    z-index: 5;
+    opacity: 0.6;
+  }
+  #counter {
+    position: fixed;
+    top: 14px; right: 18px;
+    color: var(--cyan);
+    font: 11px ui-monospace, Menlo, monospace;
+    letter-spacing: 2px;
+    pointer-events: none;
+    z-index: 5;
+    opacity: 0.55;
+  }
+  #help {
+    position: fixed;
+    bottom: 14px; right: 14px;
+    color: var(--mute);
+    font: 9px ui-monospace, Menlo, monospace;
+    letter-spacing: 1.5px;
+    text-transform: uppercase;
+    line-height: 1.7;
+    pointer-events: none;
+    z-index: 5;
+    opacity: 0.35;
+    text-align: right;
+  }
+
+  #tracklist {
+    position: fixed;
+    top: 50%; right: 16px; transform: translateY(-50%);
+    z-index: 20;
+    display: flex; flex-direction: column; gap: 1px;
+    font: 10px ui-monospace, Menlo, monospace;
+    letter-spacing: 0.5px;
+    background: rgba(0, 8, 32, 0.5);
+    border: 1px solid rgba(44, 225, 245, 0.2);
+    border-radius: 5px;
+    padding: 6px;
+    backdrop-filter: blur(6px);
+    -webkit-backdrop-filter: blur(6px);
+    max-height: 92vh; overflow-y: auto;
+  }
+  #tracklist .trk {
+    display: flex; gap: 8px; align-items: baseline;
+    padding: 3px 8px;
+    border-radius: 3px;
+    color: rgba(245,230,255,0.5);
+    cursor: pointer;
+    white-space: nowrap;
+    transition: background 80ms, color 80ms;
+  }
+  #tracklist .trk:hover { background: rgba(44,225,245,0.12); color: #fff; }
+  #tracklist .trk.on {
+    background: rgba(44,225,245,0.2);
+    color: var(--cyan);
+    box-shadow: inset 2px 0 0 var(--cyan);
+  }
+  #tracklist .trk .num { opacity: 0.5; min-width: 16px; }
+  #tracklist .trk .nm  { flex: 1; text-transform: uppercase; }
+  #tracklist .trk .ch  { opacity: 0.4; font-size: 9px; }
+
+  #chainpanel {
+    position: fixed; top: 16px; left: 16px; z-index: 20;
+    width: 300px;
+    background: rgba(0, 8, 32, 0.62);
+    border: 1px solid rgba(44, 225, 245, 0.3);
+    border-radius: 6px;
+    padding: 12px 14px 14px;
+    backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px);
+    font: 11px ui-monospace, Menlo, monospace;
+  }
+  #chainpanel .lbl { color: var(--mute); text-transform: uppercase; letter-spacing: 1px; font-size: 10px; margin-bottom: 5px; }
+  #chainpanel input {
+    width: 100%; background: rgba(0,0,0,0.5); color: var(--text);
+    border: 1px solid rgba(44,225,245,0.3); border-radius: 3px;
+    padding: 6px 8px; font: inherit; font-size: 10px;
+  }
+  #chainpanel .btns { display: flex; gap: 6px; margin-top: 7px; }
+  #chainpanel button {
+    flex: 1; cursor: pointer; font: inherit; font-size: 10px; font-weight: 600;
+    text-transform: uppercase; letter-spacing: 0.5px;
+    padding: 8px 6px; border-radius: 3px; border: none;
+  }
+  #chainpanel #rollBtn { background: var(--magenta); color: #fff; }
+  #chainpanel #applyBtn { background: rgba(44,225,245,0.18); color: var(--cyan); border: 1px solid rgba(44,225,245,0.35); }
+  #chainpanel #pianoBtn { background: rgba(226,36,231,0.14); color: var(--magenta); border: 1px solid rgba(226,36,231,0.4); }
+  #chainpanel #hideBtn { background: rgba(255,255,255,0.06); color: var(--mute); border: 1px solid rgba(245,230,255,0.18); }
+  #chainpanel #recBtn { background: rgba(255,60,90,0.16); color: #ff5c7a; border: 1px solid rgba(255,60,90,0.4); }
+  #chainpanel #recBtn.on { background: #ff2d4a; color: #fff; border-color: #ff2d4a; }
+  /* clean art mode — everything but the canvas hidden */
+  body.ui-hidden #chainpanel,
+  body.ui-hidden #hud,
+  body.ui-hidden #counter,
+  body.ui-hidden #help { display: none !important; }
+  #uidot {
+    position: fixed; bottom: 12px; left: 12px; z-index: 30;
+    width: 11px; height: 11px; border-radius: 50%;
+    background: rgba(44,225,245,0.28);
+    border: 1px solid rgba(44,225,245,0.5);
+    cursor: pointer; opacity: 0.35;
+    transition: opacity 120ms;
+  }
+  #uidot:hover { opacity: 0.9; }
+  #chainpanel button:hover { filter: brightness(1.18); }
+  #chainpanel button:active { transform: translateY(1px); }
+  #chainpanel .hv { margin-top: 9px; color: var(--cyan); font-size: 10px; word-break: break-all; opacity: 0.75; }
+
+  /* ============================================================
+     PUBLIC SITE — submerged archive / sonar log
+     ============================================================ */
+  #mark {
+    position: fixed; top: 20px; left: 22px; z-index: 30;
+    font-size: 11px; letter-spacing: 3px; text-transform: uppercase;
+    color: var(--cyan); opacity: 0.72; pointer-events: none;
+    text-shadow: 0 0 14px rgba(44,225,245,0.5);
+  }
+
+  /* entry veil */
+  #veil {
+    position: fixed; inset: 0; z-index: 50;
+    display: flex; align-items: center; justify-content: center;
+    background: radial-gradient(120% 90% at 50% 42%, rgba(0,10,37,0.55) 0%, rgba(0,6,22,0.9) 60%, rgba(0,4,16,0.97) 100%);
+    backdrop-filter: blur(2px); -webkit-backdrop-filter: blur(2px);
+    transition: opacity 900ms ease, visibility 900ms;
+    cursor: pointer;
+  }
+  body.started #veil { opacity: 0; visibility: hidden; pointer-events: none; }
+  .veil-inner { text-align: center; padding: 24px; transform: translateY(-2vh); }
+  .wordmark {
+    font-size: clamp(38px, 9vw, 104px);
+    letter-spacing: clamp(4px, 1.4vw, 16px);
+    font-weight: 600; line-height: 0.98;
+    color: #eafcff;
+    text-shadow: 0 0 40px rgba(44,225,245,0.45), 0 0 90px rgba(226,36,231,0.25);
+    animation: rise 1100ms cubic-bezier(.2,.7,.2,1) both;
+  }
+  .tagline {
+    margin-top: 20px;
+    font-size: clamp(11px, 1.7vw, 15px);
+    letter-spacing: 2px; color: var(--mute);
+    animation: rise 1100ms 140ms cubic-bezier(.2,.7,.2,1) both;
+  }
+  #enterBtn {
+    margin-top: 40px;
+    background: transparent; color: var(--cyan);
+    border: 1px solid rgba(44,225,245,0.5); border-radius: 2px;
+    padding: 14px 44px; cursor: pointer;
+    font: inherit; font-size: 12px; letter-spacing: 4px; text-transform: uppercase;
+    transition: background 200ms, box-shadow 200ms, color 200ms;
+    animation: rise 1100ms 280ms cubic-bezier(.2,.7,.2,1) both;
+  }
+  #enterBtn:hover { background: rgba(44,225,245,0.12); box-shadow: 0 0 34px rgba(44,225,245,0.35); color: #eafcff; }
+  .by {
+    margin-top: 28px; font-size: 10px; letter-spacing: 4px;
+    text-transform: uppercase; color: rgba(226,36,231,0.75);
+    animation: rise 1100ms 420ms cubic-bezier(.2,.7,.2,1) both;
+  }
+  @keyframes rise { from { opacity: 0; transform: translateY(16px); } to { opacity: 1; transform: translateY(0); } }
+
+  /* live readout */
+  #readout {
+    position: fixed; left: 22px; bottom: 92px; z-index: 20;
+    font-size: 10px; letter-spacing: 1.5px; line-height: 1.8;
+    text-transform: uppercase; color: var(--mute);
+    pointer-events: none; opacity: 0; transition: opacity 500ms;
+    max-width: 60vw;
+  }
+  body.started #readout { opacity: 0.66; }
+  #readout b { color: var(--cyan); font-weight: 600; }
+
+  /* control dock */
+  #dock {
+    position: fixed; left: 0; right: 0; bottom: 0; z-index: 25;
+    display: flex; flex-direction: column; align-items: center; gap: 10px;
+    padding: 16px 16px 22px;
+    background: linear-gradient(to top, rgba(0,5,18,0.82) 0%, rgba(0,5,18,0.4) 60%, rgba(0,5,18,0) 100%);
+    opacity: 0; transform: translateY(12px); transition: opacity 600ms, transform 600ms;
+  }
+  body.started #dock { opacity: 1; transform: translateY(0); }
+  #walletForm { display: flex; gap: 8px; width: min(520px, 92vw); margin: 0; }
+  #walletInput {
+    flex: 1; background: rgba(0,0,0,0.45); color: var(--text);
+    border: 1px solid rgba(44,225,245,0.3); border-radius: 2px;
+    padding: 12px 14px; font: inherit; font-size: 13px; letter-spacing: 0.5px;
+    outline: none; transition: border-color 200ms, box-shadow 200ms;
+  }
+  #walletInput::placeholder { color: rgba(245,230,255,0.4); letter-spacing: 0.5px; }
+  #walletInput:focus { border-color: var(--cyan); box-shadow: 0 0 22px rgba(44,225,245,0.25); }
+  #dock button {
+    background: transparent; border: 1px solid rgba(44,225,245,0.35);
+    color: var(--cyan); border-radius: 2px; cursor: pointer;
+    font: inherit; font-size: 12px; letter-spacing: 2px; text-transform: uppercase;
+    padding: 12px 18px; transition: background 180ms, box-shadow 180ms;
+    white-space: nowrap;
+  }
+  #dock button:hover { background: rgba(44,225,245,0.12); box-shadow: 0 0 20px rgba(44,225,245,0.25); }
+  #hearBtn { border-color: rgba(226,36,231,0.5); color: var(--magenta); }
+  #hearBtn:hover { background: rgba(226,36,231,0.14); box-shadow: 0 0 20px rgba(226,36,231,0.3); }
+  #dockRow { display: flex; gap: 8px; }
+
+  /* toast */
+  #toast {
+    position: fixed; left: 50%; bottom: 118px; transform: translateX(-50%) translateY(8px);
+    z-index: 40; padding: 9px 16px; border-radius: 2px;
+    background: rgba(0,10,37,0.92); border: 1px solid rgba(44,225,245,0.4);
+    color: var(--cyan); font-size: 11px; letter-spacing: 1.5px; text-transform: uppercase;
+    opacity: 0; pointer-events: none; transition: opacity 260ms, transform 260ms;
+  }
+  #toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+
+  @media (max-width: 560px) {
+    #mark { top: 16px; left: 16px; font-size: 10px; letter-spacing: 2px; }
+    #readout { bottom: 126px; left: 16px; max-width: 88vw; }
+    #dockRow { width: min(520px, 92vw); }
+    #dockRow button { flex: 1; }
+  }
+
+  /* ============================================================
+     WHITE GALLERY OVERRIDE — art hung as a glowing screen on paper
+     ============================================================ */
+  :root { --paper: #efece4; --ink: #16161d; --ink-mute: #6d6b62; --line: rgba(22,22,29,0.14); }
+  html, body {
+    background: var(--paper); color: var(--ink); overflow: hidden; height: 100%;
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  }
+  #topbar {
+    position: fixed; top: 0; left: 0; right: 0; z-index: 40;
+    display: flex; justify-content: space-between; align-items: center;
+    padding: 18px 26px; background: var(--paper); border-bottom: 1px solid var(--line);
+    font-size: 11px; letter-spacing: 3px; text-transform: uppercase;
+  }
+  #topbar .brand { color: var(--ink); font-weight: 600; }
+  #topbar .byline { color: var(--ink-mute); letter-spacing: 2px; }
+  #gallery {
+    height: 100%; display: flex; flex-direction: column;
+    align-items: center; justify-content: center; gap: 20px;
+    padding: 78px 24px 30px;
+  }
+  #stage {
+    position: relative; inset: auto; flex: none;
+    width: min(1120px, 92vw); height: min(60vh, 620px);
+    background: #000a25; border-radius: 3px; overflow: hidden; cursor: pointer;
+    box-shadow: 0 34px 90px -34px rgba(20,20,45,0.55), 0 1px 0 rgba(255,255,255,0.7);
+  }
+  #scene { position: absolute; inset: 0; }
+  #scene canvas { width: 100%; height: 100%; display: block; }
+  #bloom { position: absolute; inset: 0; }
+  #veil {
+    position: absolute; inset: 0; z-index: 6;
+    display: flex; align-items: center; justify-content: center;
+    background: rgba(0,10,37,0.32); backdrop-filter: blur(1px); -webkit-backdrop-filter: blur(1px);
+    transition: opacity 700ms ease, visibility 700ms; cursor: pointer;
+  }
+  body.started #veil { opacity: 0; visibility: hidden; pointer-events: none; }
+  #enterBtn {
+    background: rgba(255,255,255,0.94); color: #14141a; border: none; border-radius: 2px;
+    padding: 13px 42px; font: inherit; font-size: 12px; letter-spacing: 4px; text-transform: uppercase;
+    cursor: pointer; box-shadow: 0 10px 34px rgba(0,0,0,0.32); transition: background 180ms, transform 180ms;
+  }
+  #enterBtn:hover { background: #fff; transform: translateY(-1px); }
+  #readout {
+    position: static; inset: auto; max-width: none; opacity: 0; transition: opacity 500ms;
+    text-align: center; font-size: 10.5px; letter-spacing: 1.5px; line-height: 1.85;
+    text-transform: uppercase; color: var(--ink-mute); pointer-events: none;
+    background: none; border: none; padding: 0; margin: 0; box-shadow: none; white-space: normal; word-break: normal;
+  }
+  body.started #readout { opacity: 1; }
+  #readout b { color: var(--ink); font-weight: 600; }
+  #dock {
+    position: static; inset: auto; opacity: 1; transform: none; background: none; padding: 0;
+    display: flex; flex-direction: column; align-items: center; gap: 10px; width: min(560px, 92vw);
+  }
+  #walletForm { display: flex; gap: 8px; width: 100%; margin: 0; }
+  #walletInput {
+    flex: 1; background: #fff; color: var(--ink);
+    border: 1px solid var(--line); border-radius: 2px;
+    padding: 12px 14px; font: inherit; font-size: 13px; outline: none;
+    transition: border-color 180ms;
+  }
+  #walletInput::placeholder { color: #a9a79d; letter-spacing: 0.5px; }
+  #walletInput:focus { border-color: var(--ink); box-shadow: none; }
+  #dock button {
+    background: #fff; color: var(--ink); border: 1px solid var(--line); border-radius: 2px;
+    cursor: pointer; font: inherit; font-size: 12px; letter-spacing: 2px; text-transform: uppercase;
+    padding: 12px 18px; transition: background 160ms, color 160ms, border-color 160ms; box-shadow: none; white-space: nowrap;
+  }
+  #dock button:hover { background: #16161d; color: #fff; border-color: #16161d; box-shadow: none; }
+  #hearBtn { background: #16161d; color: #fff; border-color: #16161d; }
+  #hearBtn:hover { background: #000; }
+  #dockRow { display: flex; gap: 8px; }
+  .tag { font-size: 10px; letter-spacing: 3px; text-transform: uppercase; color: var(--ink-mute); }
+  #toast {
+    background: #16161d; color: #fff; border: none; bottom: 40px;
+    box-shadow: 0 8px 24px rgba(0,0,0,0.3);
+  }
+  @media (max-width: 560px) {
+    #topbar { padding: 14px 16px; font-size: 10px; letter-spacing: 2px; }
+    #gallery { padding-top: 64px; gap: 14px; }
+    #stage { height: 44vh; }
+    #dockRow { width: 100%; }
+    #dockRow button { flex: 1; }
+  }
+</style>
+</head>
+<body>
+
+<!-- gallery top bar -->
+<div id="topbar">
+  <span class="brand">Audio&nbsp;Maps</span>
+  <span class="byline">sunken0x</span>
+</div>
+
+<!-- white gallery — the art hung as a glowing screen -->
+<div id="gallery">
+  <div id="stage">
+    <div id="scene"></div>
+    <div id="bloom"></div>
+    <div id="veil"><button id="enterBtn">▶&nbsp;&nbsp;listen</button></div>
+  </div>
+
+  <div id="readout"></div>
+
+  <div id="dock">
+    <form id="walletForm" autocomplete="off">
+      <input id="walletInput" type="text" spellcheck="false" placeholder="paste a wallet or .eth to hear it" />
+      <button id="hearBtn" type="submit">hear&nbsp;it</button>
+    </form>
+    <div id="dockRow">
+      <button id="rollBtn" type="button">↻&nbsp;new block</button>
+      <button id="shareBtn" type="button">share</button>
+    </div>
+  </div>
+
+  <div class="tag">every ethereum block has a sound</div>
+</div>
+
+<div id="toast"></div>
+
+<script src="https://unpkg.com/three@0.128.0/build/three.min.js"></script>
+<script src="https://unpkg.com/three@0.128.0/examples/js/lines/LineSegmentsGeometry.js"></script>
+<script src="https://unpkg.com/three@0.128.0/examples/js/lines/LineMaterial.js"></script>
+<script src="https://unpkg.com/three@0.128.0/examples/js/lines/LineSegments2.js"></script>
+<script src="https://unpkg.com/three@0.128.0/examples/js/lines/LineGeometry.js"></script>
+<script src="https://unpkg.com/three@0.128.0/examples/js/lines/Line2.js"></script>
+<script src="https://unpkg.com/tone@14.8.49/build/Tone.js"></script>
+
+<script>
+/* ===========================================================================
+   GLITCH MAP — piano test
+   Three.js engine ported 1:1 from sunken0x/the-defiant-loop.html
+   Audio: Tone.js native synth (no Salamander samples — on-chain compatible)
+   Bridge: piano hit -> ripple -> visual pumps the wave grid + bloom
+   =========================================================================== */
+
+
+/* hoisted up top to avoid TDZ — fitCamera and getEffectiveChaos read this from the animate loop */
+let currentParams = null;
+
+/* --- 256.art-style PRNG seeded from hex hash --- */
+class Random {
+  constructor(hashHex) {
+    let hash = (hashHex || "").replace(/^0x/i, "").padStart(64, "0").slice(0, 64);
+    let offset = 0;
+    for (let i = 2; i < 66; i += 8) offset += parseInt(hash.substr(i, 8), 16) || 0;
+    offset = offset % 7;
+    const p = (pos) => parseInt(hash.substr((pos + offset) % 64, 8), 16) || 0;
+    let a = p(2) ^ p(34), b = p(10) ^ p(42), c = p(18) ^ p(50), d = p(26) ^ p(58) ^ p(2 + (8 - offset));
+    this.r = () => {
+      a |= 0; b |= 0; c |= 0; d |= 0;
+      let t = (((a + b) | 0) + d) | 0;
+      d = (d + 1) | 0;
+      a = b ^ (b >>> 9);
+      b = (c + (c << 3)) | 0;
+      c = (c << 21) | (c >>> 11);
+      c = (c + t) | 0;
+      return (t >>> 0) / 4294967296;
+    };
+    for (let i = 0; i < 256; i++) this.r();
+  }
+  dec() { return this.r(); }
+  num(a, b) { return a + (b - a) * this.r(); }
+  int(a, b) { return Math.floor(this.num(a, b + 1)); }
+  bool(p) { return this.r() < p; }
+  choice(list) { return list[this.int(0, list.length - 1)]; }
+}
+
+
+/* ============================================================
+   THREE.JS SCENE — Defiant engine
+   ============================================================ */
+const SCENE_HOST = document.getElementById('scene');
+const bloomEl    = document.getElementById('bloom');
+const stage      = document.getElementById('stage');
+
+/* 16 color schemes — darkest is always bgColor.  Block hash picks one per token.
+   These are placeholders / first-pass guesses.  User will provide a screenshot of
+   the canonical 20 Glitch Maps schemes to refine. */
+const SCHEMES = [
+  { name: "Classic Sunken",   color1: 0x2ce1f5, color2: 0xe224e7, bgColor: 0x000a25 },
+  { name: "Bitcoin Orange",   color1: 0xf7931a, color2: 0xffd66e, bgColor: 0x140700 },
+  { name: "Hot Blood",        color1: 0xc7000c, color2: 0x6e0008, bgColor: 0x140000 },  // proper blood red
+  { name: "Glacier",          color1: 0xb4f1ff, color2: 0x002060, bgColor: 0x020a14 },  // ice + navy
+  { name: "Plasma",           color1: 0xff2bd6, color2: 0x2bffe0, bgColor: 0x0a000f },
+  { name: "Forest Floor",     color1: 0x2e7d32, color2: 0x76ff03, bgColor: 0x040a04 },  // deep green + lime
+  { name: "Pink Sunset",      color1: 0xff5b9d, color2: 0xffae6e, bgColor: 0x150812 },
+  { name: "Imperial",         color1: 0xb5a8ff, color2: 0xffd84a, bgColor: 0x0a0612 },
+  { name: "Ash",              color1: 0xffffff, color2: 0x444444, bgColor: 0x000000 },  // black and white only
+  { name: "Deep Ocean",       color1: 0x001f5c, color2: 0x1240d8, bgColor: 0x000d24 },  // navy + royal blue, blue ground
+  { name: "Rust",             color1: 0xff7a2b, color2: 0xd12a00, bgColor: 0x130703 },
+  { name: "Vapour",           color1: 0xff8de4, color2: 0x58cfff, bgColor: 0x0c0414 },
+  { name: "Cold Iron",        color1: 0xc2d6ff, color2: 0xffffff, bgColor: 0x080a10 },
+  { name: "Magenta Black",    color1: 0xff007f, color2: 0xffffff, bgColor: 0x000000 },
+  { name: "Tidewater",        color1: 0x2466e8, color2: 0x26a8c8, bgColor: 0x020a1a },
+];
+
+let SCHEME = SCHEMES[0]; // mutated when scheme changes; used by Three.js init
+const NUM_LINES_BASE = 72;
+const POINTS_BASE    = 72;
+const SPACING        = 0.345;
+/* glitch amplitude is now chaos-driven — v1 behaviour.
+   chaos 1-3 = ZERO fractal (clean wave), chaos 8-9 = mega chaotic / fractal storm. */
+// exact values from sunken0x/GlitchMaps GitHub. chaos 1 = clean. chaos 2+ ramps up.
+const CHAOS_GLITCH  = [0,  0,    0.3,  0.7,  1.2,  2.0,  3.0,  4.5,  3.75, 3.3];  // 8 reduced 25%, 9 reduced further
+const CHAOS_OCTAVES = [0,  1,    1,    2,    2,    2,    3,    3,    4,    4 ];
+let currentGlitch = CHAOS_GLITCH[5];
+let currentOctaves = CHAOS_OCTAVES[5];
+let activeNumLines = NUM_LINES_BASE;
+let activePoints   = POINTS_BASE;
+
+/* piano-driven ripples */
+const ripples = []; // { tStart, amp, speed, k, decay, width }
+let flashPulse = 0;
+let bassFlash  = 0;
+
+function spawnRipple(noteName, vel, nowMs) {
+  const oct = parseInt(noteName.slice(-1), 10);
+  const bass = oct <= 2;
+  const v = Math.max(0.4, Math.min(1, vel || 0.6));
+  ripples.push({
+    tStart: nowMs,
+    amp:   (bass ? 5.625 : 2.25) * v,
+    speed: bass ? 0.0085 : 0.014,
+    k:     bass ? 0.55 : 1.1,
+    width: bass ? 4.5 : 2.4,
+    decay: bass ? 2600 : 1500,
+  });
+  if (ripples.length > 14) ripples.shift();
+  flashPulse = Math.min(1, flashPulse + (bass ? 0.7 : 0.4) * v);
+  if (bass) bassFlash = Math.min(1, bassFlash + 1.4 * v);
+}
+
+const w = () => SCENE_HOST.clientWidth;
+const h = () => SCENE_HOST.clientHeight;
+
+const scene = new THREE.Scene();
+const camera = new THREE.PerspectiveCamera(75, w() / h(), 0.1, 1000);
+camera.position.set(0, 0, 17.7);
+camera.lookAt(0, 0, 0);
+
+const renderer = new THREE.WebGLRenderer({ antialias: true, preserveDrawingBuffer: true });
+renderer.setSize(w(), h());
+renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+SCENE_HOST.appendChild(renderer.domElement);
+
+const HAS_FAT_LINES = typeof THREE.Line2 !== 'undefined'
+                  && typeof THREE.LineMaterial !== 'undefined'
+                  && typeof THREE.LineGeometry !== 'undefined';
+
+const bgPlane = new THREE.Mesh(
+  new THREE.PlaneGeometry(200, 200),
+  new THREE.MeshBasicMaterial({ color: SCHEME.bgColor })
+);
+bgPlane.position.z = -10;
+scene.add(bgPlane);
+
+const linesGroup = new THREE.Group();
+scene.add(linesGroup);
+const lines = [];
+
+let sharedLineMat;
+if (HAS_FAT_LINES) {
+  sharedLineMat = new THREE.LineMaterial({
+    color: SCHEME.color1, linewidth: 2.5, transparent: true, opacity: 0.9, worldUnits: false,
+  });
+  sharedLineMat.resolution.set(window.innerWidth, window.innerHeight);
+} else {
+  sharedLineMat = new THREE.LineBasicMaterial({
+    color: SCHEME.color1, linewidth: 2.5, transparent: true, opacity: 0.9,
+  });
+}
+
+let activeExtent = { halfX: 12.5, halfY: 12.5 };
+
+function buildLines() {
+  for (const l of lines) {
+    if (l.mesh.geometry) l.mesh.geometry.dispose();
+    linesGroup.remove(l.mesh);
+  }
+  lines.length = 0;
+
+  const aspect = w() / h();
+  const isVertical = currentParams && currentParams.orientation === "vertical";
+
+  // numLines = how many parallel lines · pointsPerLine = points along each line
+  let numLines, pointsPerLine;
+  if (isVertical) {
+    // vertical lines: spread across X (numLines = horizontal density), each line runs along Y
+    numLines      = aspect > 1 ? Math.round(NUM_LINES_BASE * aspect) : NUM_LINES_BASE;
+    pointsPerLine = aspect < 1 ? Math.round(POINTS_BASE / aspect) : POINTS_BASE;
+  } else {
+    // horizontal lines: spread across Y (numLines = vertical density), each line runs along X
+    numLines      = aspect < 1 ? Math.round(NUM_LINES_BASE / aspect) : NUM_LINES_BASE;
+    pointsPerLine = aspect > 1 ? Math.round(POINTS_BASE * aspect)    : POINTS_BASE;
+  }
+  activeNumLines = numLines;
+  activePoints   = pointsPerLine;
+
+  let halfX = 0, halfY = 0;
+  for (let lineIdx = 0; lineIdx < numLines; lineIdx++) {
+    const positions = [];
+    const orig = [];
+    for (let ptIdx = 0; ptIdx < pointsPerLine; ptIdx++) {
+      let xPos, yPos;
+      if (isVertical) {
+        xPos = (lineIdx - numLines / 2) * SPACING;
+        yPos = (ptIdx - pointsPerLine / 2) * SPACING;
+      } else {
+        xPos = (ptIdx - pointsPerLine / 2) * SPACING;
+        yPos = (lineIdx - numLines / 2) * SPACING;
+      }
+      positions.push(xPos, yPos, 0);
+      orig.push({ x: xPos, y: yPos });
+      if (Math.abs(xPos) > halfX) halfX = Math.abs(xPos);
+      if (Math.abs(yPos) > halfY) halfY = Math.abs(yPos);
+    }
+    let line;
+    if (HAS_FAT_LINES) {
+      const geometry = new THREE.LineGeometry();
+      geometry.setPositions(positions);
+      line = new THREE.Line2(geometry, sharedLineMat);
+      line.computeLineDistances();
+    } else {
+      const geometry = new THREE.BufferGeometry();
+      geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+      line = new THREE.Line(geometry, sharedLineMat);
+    }
+    linesGroup.add(line);
+    lines.push({ mesh: line, orig, scratch: new Float32Array(pointsPerLine * 3) });
+  }
+  activeExtent = { halfX, halfY };
+}
+buildLines();
+
+function fitCamera() {
+  const aspect = w() / h();
+  camera.aspect = aspect;
+  // grid is now built natively in correct orientation, so just use raw extent
+  const halfX = activeExtent.halfX || (activePoints   * SPACING) / 2;
+  const halfY = activeExtent.halfY || (activeNumLines * SPACING) / 2;
+  const fovRad    = camera.fov * Math.PI / 180;
+  const tanHalf   = Math.tan(fovRad / 2);
+  const distVert  = halfY / tanHalf;
+  const distHorz  = halfX / (tanHalf * aspect);
+  camera.position.z = Math.max(distVert, distHorz) * 1.20;  // 20% padding (chaos 8-9 displaces big)
+  camera.updateProjectionMatrix();
+  renderer.setSize(w(), h());
+  if (HAS_FAT_LINES && sharedLineMat && sharedLineMat.resolution) {
+    sharedLineMat.resolution.set(w(), h());
+  }
+}
+fitCamera();
+window.addEventListener('resize', () => { buildLines(); fitCamera(); });
+
+function fractalNoise(x, y, time, octaves) {
+  let r = Math.sin(x * 0.5 + time * 0.003) * Math.cos(y * 0.3 + time * 0.004);
+  if (octaves >= 2) r += Math.sin(x * 1.2 + time * 0.007) * Math.cos(y * 0.8 + time * 0.005) * 0.5;
+  if (octaves >= 3) r += Math.sin(x * 2.1 + time * 0.012) * Math.cos(y * 1.5 + time * 0.009) * 0.25
+                       + Math.sin((x + y) * 0.2 + time * 0.002) * Math.cos((x - y) * 0.15 + time * 0.003) * 0.3;
+  if (octaves >= 4) r += Math.sin(x * 3.5 + time * 0.018) * Math.cos(y * 2.8 + time * 0.014) * 0.125;
+  return r;
+}
+
+function rippleAt(d, time) {
+  let z = 0;
+  for (let i = ripples.length - 1; i >= 0; i--) {
+    const r = ripples[i];
+    const age = time - r.tStart;
+    if (age > r.decay) { ripples.splice(i, 1); continue; }
+    const env = (1 - age / r.decay);
+    const wf  = r.speed * age;
+    const dr  = d - wf;
+    const win = Math.exp(-(dr * dr) / (r.width * r.width));
+    z += r.amp * env * env * Math.cos(dr * r.k) * win;
+  }
+  return z;
+}
+
+/* ----------------------------------------------------------------------
+   10 WAVE PATTERNS — ported from the original sunken0x/GlitchMaps repo.
+   Same formulas as v1; t is performance.now()-tStart (ms), so we scale
+   t * 0.001 per second to match v1's timeFactor*0.1 visual rate.
+   ---------------------------------------------------------------------- */
+const WAVE_PATTERNS = [
+  { name: "Smooth Center",      mood: "smooth", fn: (pos, t) => {
+      const d = Math.sqrt(pos.x*pos.x + pos.y*pos.y);
+      return Math.sin(t * 0.0016 - d * 2.0) * 2.5;
+  }},
+  { name: "Circular Ripple",    mood: "smooth", fn: (pos, t) => {
+      const d = Math.sqrt(pos.x*pos.x + pos.y*pos.y);
+      return Math.sin(t * 0.001 - d * 0.6) * 2;
+  }},
+  { name: "Linear Wave",        mood: "smooth", fn: (pos, t) => {
+      return Math.sin(t * 0.001 + pos.x * 2) * 2;
+  }},
+  { name: "Diagonal Sweep",     mood: "smooth", fn: (pos, t) => {
+      return Math.sin(t * 0.001 + (pos.x + pos.y) * 1.5) * 2;
+  }},
+  { name: "Radial Burst",       mood: "mid",    fn: (pos, t) => {
+      const a = Math.atan2(pos.y, pos.x);
+      return Math.sin(t * 0.002 + a * 3) * 2;
+  }},
+  { name: "Cross Pattern",      mood: "smooth", fn: (pos, t) => {
+      return Math.sin(t * 0.001 + pos.x * 2) * Math.cos(t * 0.001 + pos.y * 2) * 2;
+  }},
+  { name: "Square Wave",        mood: "mid",    fn: (pos, t) => {
+      return Math.sin(t * 0.001 + pos.x * 1.5) * 2.2;
+  }},
+  { name: "Sawtooth Wave",      mood: "harsh",  fn: (pos, t) => {
+      const ph = (t * 0.001 + pos.x * 2) % (Math.PI * 2);
+      return ((ph / Math.PI) - 1) * 2;
+  }},
+  { name: "Zigzag Pattern",     mood: "harsh",  fn: (pos, t) => {
+      const d1 = Math.sin(t * 0.001 + (pos.x + pos.y) * 1.5);
+      const d2 = Math.sin(t * 0.001 + (pos.x - pos.y) * 1.5);
+      return (d1 + d2) * 1.2;
+  }},
+  { name: "Concentric Squares", mood: "harsh",  fn: (pos, t) => {
+      const dx = Math.abs(pos.x), dy = Math.abs(pos.y);
+      const mD = Math.max(dx, dy);
+      return Math.sin(t * 0.001 - mD * 0.8) * 2;
+  }},
+];
+
+let activeWaveIdx = 0;
+function waveAt(pos, time) {
+  return WAVE_PATTERNS[activeWaveIdx].fn(pos, time);
+}
+
+let frameCount = 0;
+const FLASH_FRAMES = 7;
+
+function applyScheme(scheme) {
+  SCHEME = scheme;
+  if (bgPlane && bgPlane.material) bgPlane.material.color.setHex(scheme.bgColor);
+  document.documentElement.style.setProperty('--bg', "#" + scheme.bgColor.toString(16).padStart(6, "0"));
+  var _st = document.getElementById("stage"); if (_st) _st.style.background = "#" + scheme.bgColor.toString(16).padStart(6, "0");
+  // bloom tint follows the scheme's secondary colour
+  if (bloomEl) {
+    const r = (scheme.color2 >> 16) & 0xff, g = (scheme.color2 >> 8) & 0xff, b = scheme.color2 & 0xff;
+    bloomEl.style.background = `radial-gradient(circle at center,rgba(${r},${g},${b},0.55) 0%,rgba(${r},${g},${b},0.25) 35%,rgba(${r},${g},${b},0.0) 70%)`;
+  }
+}
+
+function updateLines(time) {
+  frameCount++;
+  flashPulse *= 0.92;
+  bassFlash  *= 0.88;  // faster decay — snappy bloom kick instead of slow strobe (was 0.975)
+
+  const phase = Math.floor(frameCount / FLASH_FRAMES) % 2;
+  sharedLineMat.color.setHex(phase === 0 ? SCHEME.color1 : SCHEME.color2);
+  // line opacity locked at constant — no audio-driven wobble (was 0.88 + bassFlash * 0.12)
+  bloomEl.style.opacity = Math.min(1, bassFlash * 1.2).toFixed(3);
+
+  const baseAmp = 0.22;
+
+  for (let li = 0; li < lines.length; li++) {
+    const { mesh, orig, scratch } = lines[li];
+    for (let i = 0; i < orig.length; i++) {
+      const pos = orig[i];
+      const d      = Math.sqrt(pos.x * pos.x + pos.y * pos.y);
+      const base   = waveAt(pos, time) * baseAmp;
+      const glitch = currentGlitch > 0 ? fractalNoise(pos.x, pos.y, time, currentOctaves) * currentGlitch : 0;
+      const ripple = rippleAt(d, time);
+      scratch[i*3]     = pos.x;
+      scratch[i*3 + 1] = pos.y;
+      scratch[i*3 + 2] = base + glitch + ripple;
+    }
+    if (HAS_FAT_LINES) {
+      mesh.geometry.setPositions(scratch);
+      mesh.computeLineDistances();
+    } else {
+      mesh.geometry.attributes.position.array.set(scratch);
+      mesh.geometry.attributes.position.needsUpdate = true;
+    }
+  }
+}
+
+const tStart = performance.now();
+function animate() {
+  requestAnimationFrame(animate);
+  const t = performance.now() - tStart;
+  updateLines(t);
+  renderer.render(scene, camera);
+}
+animate();
+
+
+/* ============================================================
+   MOTIFS — 16 compositions by Fable (8 calm / 8 aggressive).
+   Generated at load from compact specs — every event is still a
+   plain [ "bar:beat:sixteenth", note, dur, vel ] Tone.Part tuple.
+   ============================================================ */
+/* ============================================================
+   AUDIO-MAPS COMPOSITION GENERATOR
+   Seeded, deterministic. Each seed -> one looping piano motif.
+   Archetypes distilled from the 16 hand-authored tracks.
+   Output = same [ "bar:beat:sixteenth", note, dur, vel ] tuples
+   the Tone.Part engine already consumes.
+   ============================================================ */
+
+const PCN = ['C','C#','D','D#','E','F','F#','G','G#','A','A#','B'];
+const PCI = {}; PCN.forEach((n,i)=>PCI[n]=i);
+function midiToN(m){ m=Math.round(m); return PCN[((m%12)+12)%12] + (Math.floor(m/12)-1); }
+const LO=24, HI=96; // clamp all output to C1..C7 (safe Salamander range)
+function clampMidi(m){ while(m<LO)m+=12; while(m>HI)m-=12; return m; }
+
+// mulberry32 seeded RNG
+function rngFrom(seed){
+  let a = (seed>>>0) || 1;
+  return () => {
+    a |= 0; a = a + 0x6D2B79F5 | 0;
+    let t = Math.imul(a ^ a>>>15, 1 | a);
+    t = t + Math.imul(t ^ t>>>7, 61 | t) ^ t;
+    return ((t ^ t>>>14) >>> 0) / 4294967296;
+  };
+}
+const pick = (R,arr)=>arr[Math.floor(R()*arr.length)];
+const T = (b,q,s)=>b+":"+q+":"+s;
+
+// chord quality -> intervals from root
+const QUAL = {
+  min:[0,3,7], maj:[0,4,7], min7:[0,3,7,10], maj7:[0,4,7,11],
+  min9:[0,3,7,10,14], maj9:[0,4,7,11,14], add9:[0,4,7,14],
+  sus2:[0,2,7], sus4:[0,5,7], pow:[0,7,12], dim:[0,3,6]
+};
+function chord(rootMidi, qual){ return QUAL[qual].map(iv=>rootMidi+iv); }
+
+// 8-bar minor-key progressions, [semitoneFromTonic, quality] per bar
+const PROGS = [
+  [[0,'min9'],[0,'min9'],[8,'maj7'],[8,'maj7'],[3,'maj7'],[3,'maj7'],[10,'maj'],[10,'maj']],
+  [[0,'min'],[10,'maj'],[8,'maj7'],[10,'maj'],[0,'min'],[10,'maj'],[5,'min7'],[7,'maj']],
+  [[0,'min9'],[5,'min7'],[8,'maj7'],[7,'maj'],[0,'min9'],[5,'min7'],[3,'maj7'],[7,'maj']],
+  [[0,'add9'],[3,'maj9'],[8,'maj7'],[5,'min7'],[0,'add9'],[3,'maj9'],[10,'maj'],[7,'maj']],
+  [[5,'min7'],[0,'min9'],[7,'maj'],[8,'maj7'],[5,'min7'],[0,'min9'],[10,'maj'],[7,'maj']],
+  [[0,'min'],[0,'min'],[5,'min'],[5,'min'],[10,'maj'],[10,'maj'],[7,'maj'],[7,'maj']],
+  [[8,'maj7'],[7,'maj'],[5,'min7'],[3,'maj7'],[0,'min9'],[10,'maj'],[8,'maj7'],[7,'maj']],
+  [[0,'min7'],[3,'maj7'],[7,'maj'],[10,'maj'],[8,'maj7'],[5,'min7'],[0,'min7'],[7,'maj']],
+];
+// tonic pitch-classes to spread keys across the 100
+const TONICS = ['A','D','E','C','G','B','F#'];
+
+// ---- pentatonic + scale helpers for melody ----
+const MINPENT = [0,3,5,7,10];
+function scaleNote(tonicPc, degOffsetSemis){ return tonicPc + degOffsetSemis; }
+
+// ---------- ARCHETYPES ----------
+// each returns { melody, mood }. ctx = { R, prog, tonicMidi }
+// tonicMidi is the tonic pitch at octave 2 (e.g. A2). Registers built relative.
+
+function bass(prog, i, tonicMidi, oct){ // root of bar i at given octave offset (in octaves)
+  return clampMidi(tonicMidi + prog[i%prog.length][0] + oct*12);
+}
+function barChord(prog, i, tonicMidi, oct){
+  const [semi,q] = prog[i%prog.length];
+  return chord(clampMidi(tonicMidi+semi+oct*12), q);
+}
+
+const ARCHETYPES = {
+  // --- CALM ---
+  rolling(ctx){ // SURFACE — bass whole + 8th arp + top arc
+    const {R,prog,tonicMidi}=ctx; const mel=[];
+    for(let i=0;i<8;i++){
+      const b=bass(prog,i,tonicMidi,-1); mel.push([T(i,0,0),midiToN(b),"1n",0.42]);
+      const ch=barChord(prog,i,tonicMidi,1);
+      const arp=[ch[0],ch[1],ch[2%ch.length],ch[Math.min(3,ch.length-1)],ch[2%ch.length],ch[1],ch[0],ch[1]];
+      arp.forEach((n,k)=>mel.push([T(i,k>>1,(k%2)*2),midiToN(n),"8n",0.20+0.10*Math.sin(Math.PI*k/7)]));
+      const top=ch[ch.length-1]+12;
+      mel.push([T(i,0,0),midiToN(clampMidi(top)),"2n",0.52]);
+      if(i%2===1) mel.push([T(i,2,0),midiToN(clampMidi(ch[Math.max(0,ch.length-2)]+12)),"2n",0.44]);
+    }
+    return {melody:mel,mood:'calm'};
+  },
+  wideSigh(ctx){ // UNDERTOW — bass, fifth, tenth + 2-note sighs
+    const {R,prog,tonicMidi}=ctx; const mel=[];
+    for(let i=0;i<8;i++){
+      const b=bass(prog,i,tonicMidi,-1);
+      mel.push([T(i,0,0),midiToN(b),"1n",0.46]);
+      mel.push([T(i,0,2),midiToN(clampMidi(b+7)),"2n.",0.30]);
+      const ch=barChord(prog,i,tonicMidi,1);
+      mel.push([T(i,1,0),midiToN(ch[1]),"2n",0.34]);
+      const hi=clampMidi(ch[ch.length-1]+12), lo=clampMidi(ch[Math.max(0,ch.length-2)]+12);
+      mel.push([T(i,1,2),midiToN(hi),"2n",0.52]);
+      mel.push([T(i,3,0),midiToN(lo),"2n",0.42]);
+    }
+    return {melody:mel,mood:'calm'};
+  },
+  pedalPing(ctx){ // SONAR — deep pedal + sparse high pings w/ echoes
+    const {R,prog,tonicMidi}=ctx; const mel=[];
+    for(let i=0;i<8;i++){
+      mel.push([T(i,0,0),midiToN(bass(prog,i,tonicMidi,-2)),"1n",0.50]);
+      if(i===3||i===7){const ch=barChord(prog,i,tonicMidi,0);mel.push([T(i,2,0),midiToN(ch[0]),"2n",0.24]);mel.push([T(i,2,0),midiToN(ch[1]),"2n",0.20]);}
+    }
+    for(let bar=0;bar<8;bar+=2){
+      const ch=barChord(prog,bar,tonicMidi,2); const n=clampMidi(ch[ch.length-1]+12);
+      mel.push([T(bar,1,0),midiToN(n),"2n",0.50]);
+      mel.push([T(bar,3,0),midiToN(n),"2n",0.26]);
+      mel.push([T((bar+1)%8,1,0),midiToN(n),"1n",0.15]);
+    }
+    return {melody:mel,mood:'calm'};
+  },
+  harpBloom(ctx){ // GLASS — bass + ascending run + hold
+    const {R,prog,tonicMidi}=ctx; const mel=[];
+    for(let c=0;c<4;c++){
+      const b0=c*2; const ch=barChord(prog,b0,tonicMidi,1);
+      const run=[ch[0],ch[1],ch[2%ch.length],clampMidi(ch[ch.length-1]+ (R()<0.5?6:12)),clampMidi(ch[0]+12)];
+      mel.push([T(b0,0,0),midiToN(bass(prog,b0,tonicMidi,-2)),"1n",0.38]);
+      run.forEach((n,k)=>mel.push([T(b0,k>>2,k%4),midiToN(clampMidi(n)),"16n",0.20+k*0.05]));
+      mel.push([T(b0,1,1),midiToN(clampMidi(run[4])),"2n.",0.52]);
+      mel.push([T(b0+1,0,0),midiToN(bass(prog,b0,tonicMidi,-2)),"1n",0.32]);
+      mel.push([T(b0+1,2,0),midiToN(clampMidi(run[2])),"2n",0.30]);
+    }
+    return {melody:mel,mood:'calm'};
+  },
+  counterpoint(ctx){ // SALT — two voices over falling bass
+    const {R,prog,tonicMidi}=ctx; const mel=[];
+    for(let i=0;i<8;i++){
+      mel.push([T(i,0,0),midiToN(bass(prog,i,tonicMidi,-1)),"1n",0.42]);
+      const ch=barChord(prog,i,tonicMidi,0);
+      const tenor=[ch[1],ch[2%ch.length],ch[1],ch[0]];
+      tenor.forEach((n,k)=>mel.push([T(i,k,0),midiToN(clampMidi(n+12)),"4n",0.30]));
+      const sop=clampMidi(ch[ch.length-1]+12);
+      mel.push([T(i,(i%2)?0:2,0),midiToN(sop),"2n",0.50]);
+    }
+    return {melody:mel,mood:'calm'};
+  },
+  rolled9(ctx){ // HALFLIGHT — rolled maj9/min9 + top climb
+    const {R,prog,tonicMidi}=ctx; const mel=[];
+    for(let i=0;i<8;i++){
+      mel.push([T(i,0,0),midiToN(bass(prog,i,tonicMidi,-2)),"1n",0.44]);
+      const ch=barChord(prog,i,tonicMidi,1);
+      ch.forEach((n,k)=>mel.push([T(i,k>>2,k%4),midiToN(clampMidi(n)),"1n",0.24+k*0.02]));
+      const top=clampMidi(ch[ch.length-1]+12);
+      mel.push([T(i,1,1),midiToN(top),"2n",0.52]);
+      mel.push([T(i,3,0),midiToN(top),"4n",0.28]);
+    }
+    return {melody:mel,mood:'calm'};
+  },
+
+  // --- AGGRO ---
+  octane(ctx){ // PRESSURE — octave bass 8ths + stabs + climb
+    const {R,prog,tonicMidi}=ctx; const mel=[];
+    for(let i=0;i<8;i++){
+      const lo=bass(prog,i,tonicMidi,-2), hi=clampMidi(lo+12);
+      for(let k=0;k<8;k++) mel.push([T(i,k>>1,(k%2)*2),midiToN(k%2?hi:lo),"8n",k===0?0.95:(k===4?0.85:0.6)]);
+      const ch=barChord(prog,i,tonicMidi,1);
+      ch.forEach(n=>{mel.push([T(i,1,2),midiToN(clampMidi(n)),"8n",0.72]);mel.push([T(i,3,2),midiToN(clampMidi(n)),"8n",0.64]);});
+      mel.push([T(i,2,0),midiToN(clampMidi(ch[ch.length-1]+12)),"2n",0.86]);
+    }
+    return {melody:mel,mood:'aggro'};
+  },
+  surge(ctx){ // RIPTIDE — 16th up then crash down
+    const {R,prog,tonicMidi}=ctx; const mel=[];
+    for(let i=0;i<8;i++){
+      const ch=barChord(prog,i,tonicMidi,0);
+      const ext=[ch[0],...ch.map(n=>clampMidi(n+12)),clampMidi(ch[0]+24)];
+      mel.push([T(i,0,0),midiToN(bass(prog,i,tonicMidi,-2)),"2n",0.9]);
+      mel.push([T(i,2,0),midiToN(bass(prog,i,tonicMidi,-2)),"2n",0.8]);
+      for(let k=0;k<8;k++) mel.push([T(i,k>>2,k%4),midiToN(clampMidi(ext[k%ext.length])),"16n",k%4===0?0.8:0.55]);
+      for(let k=0;k<8;k++) mel.push([T(i,2+(k>>2),k%4),midiToN(clampMidi(ext[(ext.length-1)-(k%ext.length)])),"16n",k%4===0?0.75:0.5]);
+    }
+    return {melody:mel,mood:'aggro'};
+  },
+  fallingChords(ctx){ // COLLAPSE — half-note chords + high pedal building
+    const {R,prog,tonicMidi}=ctx; const mel=[];
+    for(let i=0;i<8;i++){
+      const ch=barChord(prog,i,tonicMidi,0), b=bass(prog,i,tonicMidi,-2);
+      [0,2].forEach(beat=>{const v=beat===0?1.0:0.85;mel.push([T(i,beat,0),midiToN(b),"2n",v]);ch.forEach(n=>mel.push([T(i,beat,0),midiToN(clampMidi(n)),"2n",v*0.8]));});
+      const ped=clampMidi(ch[ch.length-1]+12);
+      for(let k=0;k<8;k++) mel.push([T(i,k>>1,(k%2)*2),midiToN(ped),"8n",0.35+(i%4)*0.1+(k%2)*0.08]);
+    }
+    return {melody:mel,mood:'aggro'};
+  },
+  relentless(ctx){ // SIREN — one high note vs shifting base, rising
+    const {R,prog,tonicMidi}=ctx; const mel=[];
+    const ch0=barChord(prog,0,tonicMidi,2); const high=clampMidi(ch0[0]+12);
+    for(let i=0;i<8;i++){
+      mel.push([T(i,0,0),midiToN(bass(prog,i,tonicMidi,-2)),"1n",0.95]);
+      const ch=barChord(prog,i,tonicMidi,0);
+      ch.forEach(n=>{mel.push([T(i,1,0),midiToN(clampMidi(n+12)),"4n",0.6]);mel.push([T(i,3,0),midiToN(clampMidi(n+12)),"4n",0.55]);});
+      for(let k=0;k<8;k++) mel.push([T(i,k>>1,(k%2)*2),midiToN(high),"8n",0.55+i*0.04+(k===0?0.12:0)]);
+    }
+    return {melody:mel,mood:'aggro'};
+  },
+  machine(ctx){ // STATIC — perpetual 16th cells
+    const {R,prog,tonicMidi}=ctx; const mel=[];
+    for(let i=0;i<8;i++){
+      const ch=barChord(prog,i,tonicMidi,1), b=bass(prog,i,tonicMidi,-1);
+      mel.push([T(i,0,0),midiToN(b),"2n",0.9]); mel.push([T(i,2,0),midiToN(b),"2n",0.8]);
+      const cell=[ch[ch.length-1],ch[1],ch[0],ch[1]].map(n=>clampMidi(n+12));
+      for(let k=0;k<16;k++) mel.push([T(i,k>>2,k%4),midiToN(cell[k%4]),"16n",k%4===0?0.78:0.5+(k%4)*0.03]);
+    }
+    return {melody:mel,mood:'aggro'};
+  },
+  doom(ctx){ // ABYSS — bottom fifths + falling glitter
+    const {R,prog,tonicMidi}=ctx; const mel=[];
+    for(let i=0;i<8;i++){
+      const b=bass(prog,i,tonicMidi,-3);
+      mel.push([T(i,0,0),midiToN(b),"1n",1.0]); mel.push([T(i,0,0),midiToN(clampMidi(b+7)),"1n",0.9]);
+      if(i%2===1){
+        const ch=barChord(prog,i,tonicMidi,2);
+        const glit=[...ch].reverse().map(n=>clampMidi(n+12));
+        for(let k=0;k<8;k++) mel.push([T(i,2+(k>>2),k%4),midiToN(glit[k%glit.length]),"16n",0.65-k*0.05]);
+      }
+    }
+    return {melody:mel,mood:'aggro'};
+  },
+};
+
+const CALM  = ['rolling','wideSigh','pedalPing','harpBloom','counterpoint','rolled9'];
+const AGGRO = ['octane','surge','fallingChords','relentless','machine','doom'];
+
+// name pool — sunken0x / ocean lexicon, 120 words
+const NAMES = ("SURFACE UNDERTOW SONAR GLASS SALT LULL HALFLIGHT MOONPOOL PRESSURE RIPTIDE COLLAPSE SIREN TREMOR BREAKER STATIC ABYSS "+
+"TROUGH SILT FATHOM DRIFT EBB KELP TRENCH BRINE SHOAL CURRENT DEPTH HAZE MURK SWELL WAKE FOAM TIDE REEF SLICK "+
+"HOLLOW HUSH GLIMMER SEDIMENT ANCHOR DREDGE SUBMERGE PLUNGE CASCADE VESSEL LANTERN DROWN SHIVER GLOOM "+
+"BALLAST BAROMETER BELOW BENEATH CAVERN CISTERN CRADLE DELUGE DERELICT ECHO FLICKER FRACTURE GHOST HARBOR "+
+"HORIZON KRAKEN LAGOON MARINER MAROON MONSOON NAUTILUS NOCTURNE OMEN PEARL QUAY RATION RUST SAILOR SCUTTLE "+
+"SEAFLOOR SEANCE SHALLOWS SHELF SHROUD SIGNAL SILENCE SINKER SLUMBER SPECTER SPINDRIFT SQUALL STARBOARD "+
+"STILLNESS STRATA SUBMARINE SUNKEN TEMPEST THRESHOLD TITANIC TOWLINE UNDERCURRENT VANTAGE VAULT VIGIL "+
+"WATERLINE WHARF WHIRLPOOL WINCH WRECK ZEPHYR ANTHRACITE COBALT DUSK FROST GRAVITY HOLLOWAY IRON LEVIATHAN "+
+"MIDNIGHT OBSIDIAN").trim().split(/\s+/);
+
+function composeMotif(seed){
+  const R = rngFrom(seed*2654435761 + 12345);
+  const isCalm = (seed % 2 === 0);            // alternate so list interleaves; chaos aligns per-variation
+  const archName = pick(R, isCalm?CALM:AGGRO);
+  const prog = pick(R, PROGS);
+  const tonicPc = pick(R, TONICS);
+  const tonicMidi = PCI[tonicPc] + 12*2;      // tonic at octave 2 baseline
+  const {melody,mood} = ARCHETYPES[archName]({R,prog,tonicMidi});
+  const name = NAMES[seed % NAMES.length];
+  return { name, mood, loopBars:8, melody, arch:archName, key:tonicPc };
+}
+
+function buildMotifs(n){ const out=[]; for(let s=0;s<n;s++) out.push(composeMotif(s)); return out; }
+
+const MOTIFS = buildMotifs(100);
+
+
+
+/* ============================================================
+   CHAOS -> AUDIO PARAM MAP
+   ============================================================ */
+const CHAOS_LABELS = ["—", "Serene", "Peaceful", "Gentle", "Flowing", "Steady", "Turbulent", "Chaotic", "Fractal Chaos", "Fractal Storm"];
+const CHAOS_MAP = {
+  1: { tempo: 50, velMul: 0.55, voiceBias: ["sine","amplush"],          mood: 0.0 },
+  2: { tempo: 58, velMul: 0.65, voiceBias: ["sine","amplush"],          mood: 0.05 },
+  3: { tempo: 66, velMul: 0.7,  voiceBias: ["amplush","fm"],            mood: 0.15 },
+  4: { tempo: 72, velMul: 0.8,  voiceBias: ["fm","amplush"],            mood: 0.3 },
+  5: { tempo: 80, velMul: 0.9,  voiceBias: ["fm"],                      mood: 0.5 },
+  6: { tempo: 92, velMul: 1.0,  voiceBias: ["fm","triangle"],           mood: 0.7 },
+  7: { tempo: 104,velMul: 1.05, voiceBias: ["fm","square"],             mood: 0.85 },
+  8: { tempo: 116,velMul: 1.1,  voiceBias: ["square","fm"],             mood: 0.95 },
+  9: { tempo: 128,velMul: 1.15, voiceBias: ["square","triangle"],       mood: 1.0 }
+};
+
+
+/* ============================================================
+   AUDIO ENGINE — Tone.js native synths only (no samples)
+   ============================================================ */
+let masterGain, comp, reverb, lowpass;
+let voiceCache = {};   // pre-built synths to avoid mid-play allocation
+let activeSynth = null;
+let activeVoice = null;
+let part = null;
+
+function buildAudioGraph() {
+  if (masterGain) return;
+  masterGain = new Tone.Gain(0.85).toDestination();
+  comp = new Tone.Compressor(-12, 3).connect(masterGain);
+  reverb = new Tone.Reverb({ decay: 5.5, wet: 0.32, preDelay: 0.02 }).connect(comp);
+  lowpass = new Tone.Filter(8000, "lowpass").connect(reverb);
+}
+
+// PIANO MODE — "synth" = 100% on-chain synthesized piano (no samples, mint target)
+//              "grand" = Salamander Grand sampler (~3MB MP3s, for A/B comparison)
+let PIANO_MODE = "grand";  // site uses the real grand (Salamander, off-chain CDN)
+
+/* ---- On-chain synth piano ---------------------------------------------------
+   Pure Tone.js synthesis, zero samples. Two layers summed:
+   - TINE: custom-partial oscillator (piano-like harmonic series), fast attack,
+     long exponential decay, no sustain, gentle release — the sung tone.
+   - HAMMER: short bright FM click scaled by velocity^2 — the felt-strike bite.
+   Velocity drives the hammer level so soft notes are mellow, hard notes bright.
+   Wrapper exposes triggerAttackRelease(note,dur,time,vel) so the engine treats
+   it exactly like the sampler. Fully inscribable on-chain (a few hundred bytes).
+----------------------------------------------------------------------------- */
+function buildSynthPiano() {
+  const tine = new Tone.PolySynth(Tone.Synth, {
+    oscillator: { type: "custom", partials: [1, 0.55, 0.40, 0.26, 0.19, 0.13, 0.09, 0.055, 0.03, 0.02] },
+    envelope: { attack: 0.005, decay: 1.7, sustain: 0.0, release: 1.35, attackCurve: "exponential", decayCurve: "exponential" },
+  });
+  tine.maxPolyphony = 32;
+  const hammer = new Tone.PolySynth(Tone.FMSynth, {
+    harmonicity: 3.0, modulationIndex: 7,
+    oscillator: { type: "sine" }, modulation: { type: "square" },
+    envelope: { attack: 0.001, decay: 0.10, sustain: 0.0, release: 0.14 },
+    modulationEnvelope: { attack: 0.001, decay: 0.07, sustain: 0.0, release: 0.10 },
+  });
+  hammer.maxPolyphony = 32;
+  const tg = new Tone.Gain(0.85), hg = new Tone.Gain(0.16);
+  tine.connect(tg); hammer.connect(hg);
+  tg.connect(lowpass); hg.connect(lowpass);
+  return {
+    loaded: true, _t: tine, _h: hammer,
+    triggerAttackRelease(note, dur, time, vel) {
+      const v = Math.max(0.05, Math.min(1, vel));
+      this._t.triggerAttackRelease(note, dur, time, v);
+      this._h.triggerAttackRelease(note, 0.12, time, v * v);  // brighter strike on harder hits
+    },
+  };
+}
+
+function buildGrandPiano() {
+  return new Tone.Sampler({
+    urls: {
+      "A0":"A0.mp3","C1":"C1.mp3","D#1":"Ds1.mp3","F#1":"Fs1.mp3",
+      "A1":"A1.mp3","C2":"C2.mp3","D#2":"Ds2.mp3","F#2":"Fs2.mp3",
+      "A2":"A2.mp3","C3":"C3.mp3","D#3":"Ds3.mp3","F#3":"Fs3.mp3",
+      "A3":"A3.mp3","C4":"C4.mp3","D#4":"Ds4.mp3","F#4":"Fs4.mp3",
+      "A4":"A4.mp3","C5":"C5.mp3","D#5":"Ds5.mp3","F#5":"Fs5.mp3",
+      "A5":"A5.mp3","C6":"C6.mp3","D#6":"Ds6.mp3","F#6":"Fs6.mp3",
+      "A6":"A6.mp3","C7":"C7.mp3","D#7":"Ds7.mp3","F#7":"Fs7.mp3",
+      "A7":"A7.mp3","C8":"C8.mp3"
+    },
+    baseUrl: "https://tonejs.github.io/audio/salamander/",
+    release: 1.6,
+  }).connect(lowpass);
+}
+
+function getOrBuildVoice(kind) {
+  if (PIANO_MODE === "grand") {
+    if (!voiceCache._grand) voiceCache._grand = buildGrandPiano();
+    return voiceCache._grand;
+  }
+  if (!voiceCache._synth) voiceCache._synth = buildSynthPiano();
+  return voiceCache._synth;
+}
+
+function setVoice(kind) {
+  buildAudioGraph();
+  activeSynth = getOrBuildVoice(kind);
+  activeVoice = kind;
+}
+
+/* transpose helper: shift a note name by N semitones */
+const NOTE_ORDER = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"];
+function shiftNote(noteName, semis) {
+  const m = noteName.match(/^([A-G])(#|b)?(-?\d+)$/);
+  if (!m) return noteName;
+  let pc = m[1] + (m[2] === "b" ? "b" : (m[2] || ""));
+  let oct = parseInt(m[3], 10);
+  // normalize flats to sharps
+  const FLAT_TO_SHARP = {Db:"C#", Eb:"D#", Gb:"F#", Ab:"G#", Bb:"A#"};
+  if (FLAT_TO_SHARP[pc]) pc = FLAT_TO_SHARP[pc];
+  let idx = NOTE_ORDER.indexOf(pc);
+  if (idx < 0) return noteName;
+  let abs = oct * 12 + idx + semis;
+  const newOct = Math.floor(abs / 12);
+  const newPc = NOTE_ORDER[((abs % 12) + 12) % 12];
+  return newPc + newOct;
+}
+
+function buildPart(motif, transposeSemis, octaveShift, velMul) {
+  if (part) { try { part.stop(0); part.dispose(); } catch(e){} part = null; }
+  const totalSemis = transposeSemis + octaveShift * 12;
+  const events = motif.melody.map(([t, n, d, v]) => ({
+    time: t,
+    note: shiftNote(n, totalSemis),
+    dur: d,
+    vel: Math.max(0.05, Math.min(1, v * velMul))
+  }));
+  part = new Tone.Part((time, ev) => {
+    activeSynth.triggerAttackRelease(ev.note, ev.dur, time, ev.vel);
+    Tone.Draw.schedule(() => {
+      const nowMs = performance.now() - tStart;
+      spawnRipple(ev.note, ev.vel, nowMs);
+    }, time);
+  }, events);
+  part.loop = true;
+  part.loopEnd = motif.loopBars + "m";
+}
+
+
+/* ============================================================
+   DERIVE PARAMS FROM HASH (deterministic per-token state)
+   ============================================================ */
+function deriveParams(hashHex, chaosOverride, schemeOverride, waveOverride) {
+  const rng = new Random(hashHex);
+  const chaos = chaosOverride ?? rng.int(1, 9);
+  const cmap  = CHAOS_MAP[chaos];
+  const wantAggro = rng.dec() < cmap.mood;
+  const pool  = MOTIFS.filter(m => wantAggro ? m.mood === "aggro" : m.mood === "calm");
+  const motif = pool[rng.int(0, pool.length - 1)];
+  const voice = cmap.voiceBias[rng.int(0, cmap.voiceBias.length - 1)];
+  const transposeSemis = rng.int(-5, 5);
+  const octaveShift    = rng.int(-1, 1);
+  const scheme = schemeOverride ?? SCHEMES[rng.int(0, SCHEMES.length - 1)];
+
+  // line orientation: 50/50 horizontal vs vertical per token
+  const orientation = rng.bool(0.5) ? "horizontal" : "vertical";
+
+  // wave pattern bias by chaos: low chaos = smooth only, mid chaos = smooth+mid, high chaos = anything
+  let waveIdx;
+  if (waveOverride !== null && waveOverride !== undefined) {
+    waveIdx = waveOverride;
+  } else {
+    let allowedMoods;
+    if (chaos <= 3)      allowedMoods = ["smooth"];           // 1-3 = smooth only
+    else if (chaos <= 5) allowedMoods = ["smooth", "mid"];    // 4-5 = smooth + mid
+    else if (chaos <= 7) allowedMoods = ["mid", "harsh"];     // 6-7 = mid + harsh (no smooth)
+    else                 allowedMoods = ["harsh"];            // 8-9 = harsh only (mega chaotic)
+    const wavePool = WAVE_PATTERNS
+      .map((w, i) => allowedMoods.includes(w.mood) ? i : -1)
+      .filter(i => i >= 0);
+    waveIdx = wavePool[rng.int(0, wavePool.length - 1)];
+  }
+  return {
+    chaos, chaosLabel: CHAOS_LABELS[chaos],
+    motif, voice, scheme, waveIdx, orientation,
+    tempo: cmap.tempo, velMul: cmap.velMul,
+    transposeSemis, octaveShift
+  };
+}
+
+
+/* ============================================================
+   16 VARIATIONS — handpicked across the full engine surface
+   each: { chaos 1-9, schemeIdx, motifIdx, voice, waveIdx, orientation, transposeSemis, octaveShift }
+   ============================================================ */
+const VARIATIONS = (() => {
+  const R = rngFrom(20260705);
+  const out = [];
+  for (let i = 0; i < MOTIFS.length; i++) {
+    const mood = MOTIFS[i].mood;
+    const chaos = mood === "calm" ? 1 + Math.floor(R() * 5) : 5 + Math.floor(R() * 5);
+    let moods;
+    if (chaos <= 3)      moods = ["smooth"];
+    else if (chaos <= 5) moods = ["smooth", "mid"];
+    else if (chaos <= 7) moods = ["mid", "harsh"];
+    else                 moods = ["harsh"];
+    const pool = WAVE_PATTERNS.map((w, idx) => moods.includes(w.mood) ? idx : -1).filter(x => x >= 0);
+    out.push({
+      chaos,
+      schemeIdx:      Math.floor(R() * SCHEMES.length),
+      motifIdx:       i,
+      voice:          "fm",
+      waveIdx:        pool[Math.floor(R() * pool.length)],
+      orientation:    R() < 0.5 ? "horizontal" : "vertical",
+      transposeSemis: 0,
+      octaveShift:    0,
+    });
+  }
+  return out;
+})();
+
+const readoutEl = document.getElementById("readout");
+
+function apply(p, restart=true) {
+  currentParams = p;
+  applyScheme(p.scheme);
+  activeWaveIdx = p.waveIdx;
+  currentGlitch  = CHAOS_GLITCH[p.chaos]  ?? 0.5;
+  currentOctaves = CHAOS_OCTAVES[p.chaos] ?? 3;
+  if (linesGroup) {
+    linesGroup.rotation.z = 0;
+    buildLines();
+    fitCamera();
+  }
+  buildAudioGraph();
+  setVoice(p.voice);
+  Tone.Transport.bpm.value = p.tempo;
+  buildPart(p.motif, p.transposeSemis, p.octaveShift, p.velMul);
+  if (restart && Tone.Transport.state === "started" && part) {
+    part.start(0);
+  }
+}
+
+async function startAudio() {
+  await Tone.start();
+  await Tone.loaded();  // wait for Salamander piano samples to finish loading
+  if (Tone.Transport.state !== "started") {
+    Tone.Transport.start();
+    if (part) part.start(0);
+  }
+}
+function stopAudio() {
+  if (part) { try { part.stop(0); } catch(e){} }
+  Tone.Transport.stop();
+}
+
+// ------------------------------------------------------------------
+// CHAIN-DRIVEN GENERATION — a block hash composes the entire piece:
+// music (via composeMotif) + palette + chaos + wave + orientation.
+// Deterministic: same hash in -> identical piece out, forever.
+// ------------------------------------------------------------------
+function hashToSeed(hex) {
+  const h = (hex || "").replace(/^0x/i, "") || "0";
+  let s = 2166136261 >>> 0;
+  for (let i = 0; i < h.length; i++) { s ^= h.charCodeAt(i); s = Math.imul(s, 16777619); }
+  return s >>> 0;
+}
+
+function deriveFromHash(hex) {
+  const seed  = hashToSeed(hex);
+  const motif = composeMotif(seed);
+  const R     = rngFrom(seed ^ 0x9e3779b9);
+  const chaos = motif.mood === "calm" ? 1 + Math.floor(R() * 5) : 5 + Math.floor(R() * 5);
+  let moods;
+  if (chaos <= 3)      moods = ["smooth"];
+  else if (chaos <= 5) moods = ["smooth", "mid"];
+  else if (chaos <= 7) moods = ["mid", "harsh"];
+  else                 moods = ["harsh"];
+  const pool = WAVE_PATTERNS.map((w, i) => moods.includes(w.mood) ? i : -1).filter(x => x >= 0);
+  const cmap = CHAOS_MAP[chaos];
+  return {
+    chaos, chaosLabel: CHAOS_LABELS[chaos],
+    motif, voice: "fm",
+    scheme:         SCHEMES[Math.floor(R() * SCHEMES.length)],
+    waveIdx:        pool[Math.floor(R() * pool.length)],
+    orientation:    R() < 0.5 ? "horizontal" : "vertical",
+    tempo:          cmap.tempo, velMul: cmap.velMul,
+    transposeSemis: 0, octaveShift: 0,
+    hash: hex, seed,
+  };
+}
+
+let currentHash = "0x";
+let currentLabel = "";   // human label for the current source (wallet / block)
+function renderHash(hex) {
+  currentHash = hex;
+  const p = deriveFromHash(hex);
+  apply(p);
+  const src = currentLabel || (hex.slice(0, 10) + "…" + hex.slice(-6));
+  readoutEl.innerHTML =
+    "<b>" + p.motif.name + "</b> &nbsp; " + p.motif.key + " &middot; " + p.tempo + " bpm<br>" +
+    p.scheme.name + " &middot; " + WAVE_PATTERNS[p.waveIdx].name + " &middot; chaos " + p.chaos + "<br>" +
+    "from " + src;
+}
+
+function rollHash() {
+  const b = new Uint8Array(32);
+  crypto.getRandomValues(b);
+  return "0x" + Array.from(b).map(x => x.toString(16).padStart(2, "0")).join("");
+}
+
+// ------------------------------------------------------------------
+// SITE CONTROLLER — entry veil, wallet/ENS input, roll, share
+// ------------------------------------------------------------------
+const veil        = document.getElementById("veil");
+const enterBtn    = document.getElementById("enterBtn");
+const walletForm  = document.getElementById("walletForm");
+const walletInput = document.getElementById("walletInput");
+const rollBtn     = document.getElementById("rollBtn");
+const shareBtn    = document.getElementById("shareBtn");
+const toastEl     = document.getElementById("toast");
+
+function showToast(msg) {
+  toastEl.textContent = msg;
+  toastEl.classList.add("show");
+  clearTimeout(showToast._t);
+  showToast._t = setTimeout(() => toastEl.classList.remove("show"), 1900);
+}
+function updateURL() {
+  try { history.replaceState(null, "", location.pathname + "?hash=" + currentHash); } catch (e) {}
+}
+
+// entry — first gesture unlocks audio
+async function enter() {
+  if (document.body.classList.contains("started")) return;
+  document.body.classList.add("started");
+  await startAudio();
+}
+enterBtn.addEventListener("click", (e) => { e.stopPropagation(); enter(); });
+veil.addEventListener("click", enter);
+
+// resolve any input (0x address / raw hex / .eth / any word) to a hex seed
+async function resolveToHex(input) {
+  const s = (input || "").trim();
+  if (!s) return null;
+  if (/^0x[0-9a-fA-F]{6,}$/.test(s)) return { hex: s, label: s.slice(0, 6) + "\u2026" + s.slice(-4) };
+  if (/^[0-9a-fA-F]{40,}$/.test(s)) return { hex: "0x" + s, label: s.slice(0, 6) + "\u2026" };
+  const name = s.toLowerCase().endsWith(".eth") ? s.toLowerCase() : s.toLowerCase() + ".eth";
+  try {
+    const r = await fetch("https://api.ensideas.com/ens/resolve/" + encodeURIComponent(name));
+    const j = await r.json();
+    if (j && j.address) return { hex: j.address, label: name };
+  } catch (e) {}
+  // fallback: hash the raw text so ANY input still makes a sound
+  const hx = "0x" + Array.from(s).map(c => c.charCodeAt(0).toString(16).padStart(2, "0")).join("");
+  return { hex: hx, label: s };
+}
+
+// hear a wallet / ens / anything
+walletForm.addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const raw = walletInput.value;
+  if (!raw.trim()) return;
+  showToast("resolving\u2026");
+  const res = await resolveToHex(raw);
+  if (!res) return;
+  if (!document.body.classList.contains("started")) await enter(); else await startAudio();
+  currentLabel = res.label;
+  renderHash(res.hex);
+  updateURL();
+  walletInput.blur();
+});
+
+// new random block
+rollBtn.addEventListener("click", async () => {
+  await startAudio();
+  currentLabel = "";
+  const h = rollHash();
+  renderHash(h);
+  updateURL();
+});
+
+// share the current piece
+shareBtn.addEventListener("click", async () => {
+  const url = location.origin + location.pathname + "?hash=" + currentHash;
+  try {
+    if (navigator.share) { await navigator.share({ title: "audio maps", text: "the sound of this block", url }); return; }
+    await navigator.clipboard.writeText(url);
+    showToast("link copied");
+  } catch (e) { showToast("link copied"); }
+});
+
+// tap the art to pause / play (ignore taps on the UI chrome)
+stage.addEventListener("click", async (e) => {
+  if (e.target.closest("#dock") || e.target.closest("#veil") || e.target.closest("#mark")) return;
+  if (!document.body.classList.contains("started")) { await enter(); return; }
+  if (Tone.Transport.state === "started") stopAudio(); else await startAudio();
+});
+
+window.addEventListener("keydown", (e) => {
+  if (e.target === walletInput) return;
+  if (e.key === " ") { e.preventDefault(); if (Tone.Transport.state === "started") stopAudio(); else startAudio(); }
+  else if (e.key === "r" || e.key === "R") { startAudio(); currentLabel = ""; const h = rollHash(); renderHash(h); updateURL(); }
+});
+
+// initial piece — renders behind the veil; audio waits for the first gesture.
+// ?hash=0x... opens straight to that piece (shareable link); else roll one.
+{
+  const urlHash = new URLSearchParams(location.search).get("hash");
+  const h = (urlHash && /^0x?[0-9a-fA-F]+$/.test(urlHash))
+    ? (urlHash.startsWith("0x") ? urlHash : "0x" + urlHash)
+    : rollHash();
+  renderHash(h);
+}
+
+</script>
+</body>
+</html>
