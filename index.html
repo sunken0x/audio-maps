@@ -1134,9 +1134,9 @@ const MOTIFS = buildMotifs(100);
    ============================================================ */
 const CHAOS_LABELS = ["—", "Serene", "Peaceful", "Gentle", "Flowing", "Steady", "Turbulent", "Chaotic", "Fractal Chaos", "Fractal Storm"];
 const CHAOS_MAP = {
-  1: { tempo: 50, velMul: 0.55, voiceBias: ["sine","amplush"],          mood: 0.0 },
-  2: { tempo: 58, velMul: 0.65, voiceBias: ["sine","amplush"],          mood: 0.05 },
-  3: { tempo: 66, velMul: 0.7,  voiceBias: ["amplush","fm"],            mood: 0.15 },
+  1: { tempo: 34, velMul: 0.55, voiceBias: ["sine","amplush"],          mood: 0.0 },
+  2: { tempo: 44, velMul: 0.65, voiceBias: ["sine","amplush"],          mood: 0.05 },
+  3: { tempo: 56, velMul: 0.7,  voiceBias: ["amplush","fm"],            mood: 0.15 },
   4: { tempo: 72, velMul: 0.8,  voiceBias: ["fm","amplush"],            mood: 0.3 },
   5: { tempo: 80, velMul: 0.9,  voiceBias: ["fm"],                      mood: 0.5 },
   6: { tempo: 92, velMul: 1.0,  voiceBias: ["fm","triangle"],           mood: 0.7 },
@@ -1469,17 +1469,16 @@ veil.addEventListener("click", enter);
 async function resolveToHex(input) {
   const s = (input || "").trim();
   if (!s) return null;
-  if (/^0x[0-9a-fA-F]{6,}$/.test(s)) return { hex: s, label: s.slice(0, 6) + "\u2026" + s.slice(-4) };
-  if (/^[0-9a-fA-F]{40,}$/.test(s)) return { hex: "0x" + s, label: s.slice(0, 6) + "\u2026" };
+  // only a real ETH address (40 hex, with or without 0x) or a resolving ENS name
+  if (/^0x[0-9a-fA-F]{40}$/.test(s)) return { hex: s, label: s.slice(0, 6) + "\u2026" + s.slice(-4) };
+  if (/^[0-9a-fA-F]{40}$/.test(s)) return { hex: "0x" + s, label: s.slice(0, 6) + "\u2026" + s.slice(-4) };
   const name = s.toLowerCase().endsWith(".eth") ? s.toLowerCase() : s.toLowerCase() + ".eth";
   try {
     const r = await fetch("https://api.ensideas.com/ens/resolve/" + encodeURIComponent(name));
     const j = await r.json();
     if (j && j.address) return { hex: j.address, label: name };
   } catch (e) {}
-  // fallback: hash the raw text so ANY input still makes a sound
-  const hx = "0x" + Array.from(s).map(c => c.charCodeAt(0).toString(16).padStart(2, "0")).join("");
-  return { hex: hx, label: s };
+  return { error: true };   // not a wallet or .eth \u2014 reject
 }
 
 // hear a wallet / ens / anything
@@ -1490,6 +1489,7 @@ walletForm.addEventListener("submit", async (e) => {
   showToast("resolving\u2026");
   const res = await resolveToHex(raw);
   if (!res) return;
+  if (res.error) { showToast("enter a wallet or .eth"); return; }
   if (!document.body.classList.contains("started")) await enter(); else await startAudio();
   currentLabel = res.label;
   renderHash(res.hex);
