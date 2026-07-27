@@ -338,6 +338,8 @@
   }
   body.started #readout { opacity: 0.66; }
   #readout b { color: var(--cyan); font-weight: 600; }
+  #readout .dim { opacity: 0.45; }
+  #readout i { font-style: normal; color: var(--cyan); opacity: 0.8; }
 
   /* control dock */
   #dock {
@@ -440,6 +442,8 @@
   }
   body.started #readout { opacity: 1; }
   #readout b { color: var(--ink); font-weight: 600; }
+  #readout .dim { opacity: 0.5; }
+  #readout i { font-style: normal; color: var(--ink); opacity: 0.75; }
   #dock {
     position: static; inset: auto; opacity: 1; transform: none; background: none; padding: 0;
     display: flex; flex-direction: column; align-items: center; gap: 10px; width: min(560px, 92vw);
@@ -1151,6 +1155,59 @@ const ARCHETYPES = {
     }
     return {melody:mel,mood:'calm'};
   },
+  lull(ctx){ // LULL — cradle rock, a 3-beat figure drifting against a 4-beat bar
+    const {R,prog,tonicMidi}=ctx; const mel=[];
+    for(let i=0;i<8;i++){
+      mel.push([T(i,0,0),midiToN(bass(prog,i,tonicMidi,-2)),"1n",0.40]);
+      const ch=barChord(prog,i,tonicMidi,1);
+      const rock=[ch[0],ch[2%ch.length]];
+      for(let k=0;k<4;k++){
+        const step=(i*4+k)%3;                     // 3-against-4: the figure walks
+        const n=clampMidi(rock[step%2]+(step===2?12:0));
+        mel.push([T(i,k,0),midiToN(n),"4n",0.26+(step===0?0.12:0)]);
+      }
+      if(i%4===3) mel.push([T(i,2,2),midiToN(clampMidi(ch[ch.length-1]+12)),"2n",0.44]);
+    }
+    return {melody:mel,mood:'calm'};
+  },
+  moonpool(ctx){ // MOONPOOL — music box: high ostinato cell, chords moving beneath
+    const {R,prog,tonicMidi}=ctx; const mel=[];
+    for(let i=0;i<8;i++){
+      if(i%2===0) mel.push([T(i,0,0),midiToN(bass(prog,i,tonicMidi,-2)),"1n",0.38]);
+      const ch=barChord(prog,i,tonicMidi,2);
+      const cell=[ch[ch.length-1],ch[1],ch[0],ch[1]].map(n=>clampMidi(n+12));
+      for(let k=0;k<8;k++) mel.push([T(i,k>>1,(k%2)*2),midiToN(cell[k%4]),"8n",0.18+(k%4===0?0.14:0)]);
+      if(i%4===1) mel.push([T(i,2,0),midiToN(clampMidi(ch[0])),"2n",0.34]);
+    }
+    return {melody:mel,mood:'calm'};
+  },
+  silt(ctx){ // SILT — a settling descent, top of the chord walking down an octave
+    const {R,prog,tonicMidi}=ctx; const mel=[];
+    for(let i=0;i<8;i++){
+      mel.push([T(i,0,0),midiToN(bass(prog,i,tonicMidi,-2)),"1n",0.44]);
+      const ch=barChord(prog,i,tonicMidi,0);
+      if(i%2===0) ch.forEach(n=>mel.push([T(i,0,0),midiToN(clampMidi(n)),"1n",0.22]));
+      const top=ch[ch.length-1]+12;
+      const fall=[top,top-2,top-3,top-5,top-7,top-8,top-10,top-12];
+      for(let k=0;k<4;k++) mel.push([T(i,k,0),midiToN(clampMidi(fall[(i%2)*4+k])),"4n",0.46-k*0.05]);
+    }
+    return {melody:mel,mood:'calm'};
+  },
+  drift(ctx){ // DRIFT — call and response, a low phrase answered high, space between
+    const {R,prog,tonicMidi}=ctx; const mel=[];
+    for(let i=0;i<8;i++){
+      const ch=barChord(prog,i,tonicMidi,0);
+      if((i%4)<2){                                 // the call, low and slow
+        mel.push([T(i,0,0),midiToN(bass(prog,i,tonicMidi,-2)),"2n.",0.46]);
+        [ch[0],ch[1]].forEach((n,k)=>mel.push([T(i,k*2,0),midiToN(clampMidi(n)),"2n",0.32-k*0.04]));
+      } else {                                     // the answer, two octaves up
+        const hi=[ch[ch.length-1],ch[2%ch.length],ch[1]].map(n=>clampMidi(n+24));
+        hi.forEach((n,k)=>mel.push([T(i,k+1,0),midiToN(n),"4n",0.42-k*0.06]));
+        if(i%4===3) mel.push([T(i,0,0),midiToN(bass(prog,i,tonicMidi,-1)),"1n",0.30]);
+      }
+    }
+    return {melody:mel,mood:'calm'};
+  },
 
   // --- AGGRO ---
   octane(ctx){ // PRESSURE — octave bass 8ths + stabs + climb
@@ -1220,10 +1277,66 @@ const ARCHETYPES = {
     }
     return {melody:mel,mood:'aggro'};
   },
+  tremor(ctx){ // TREMOR — tremolo between two chord tones, shivering, building
+    const {R,prog,tonicMidi}=ctx; const mel=[];
+    for(let i=0;i<8;i++){
+      const b=bass(prog,i,tonicMidi,-2);
+      mel.push([T(i,0,0),midiToN(b),"2n",0.92]); mel.push([T(i,2,0),midiToN(b),"2n",0.80]);
+      const ch=barChord(prog,i,tonicMidi,1);
+      const a=clampMidi(ch[0]+12), c=clampMidi(ch[2%ch.length]+12);
+      for(let k=0;k<16;k++) mel.push([T(i,k>>2,k%4),midiToN(k%2?c:a),"16n",0.42+i*0.045+(k%4===0?0.14:0)]);
+    }
+    return {melody:mel,mood:'aggro'};
+  },
+  breaker(ctx){ // BREAKER — space, then the wave lands: off-beat cluster hits
+    const {R,prog,tonicMidi}=ctx; const mel=[];
+    for(let i=0;i<8;i++){
+      const ch=barChord(prog,i,tonicMidi,0), b=bass(prog,i,tonicMidi,-3);
+      mel.push([T(i,1,2),midiToN(b),"2n",1.0]);   // the hit, late on beat 2
+      ch.forEach(n=>{
+        mel.push([T(i,1,2),midiToN(clampMidi(n)),"2n",0.82]);
+        mel.push([T(i,1,2),midiToN(clampMidi(n+12)),"2n",0.70]);
+      });
+      if(i%2===1){                                 // the pull back before the next one
+        const top=clampMidi(ch[ch.length-1]+24);
+        for(let k=0;k<4;k++) mel.push([T(i,3,k),midiToN(clampMidi(top-k*2)),"16n",0.60-k*0.10]);
+      }
+    }
+    return {melody:mel,mood:'aggro'};
+  },
+  trough(ctx){ // TROUGH — driving low pulse, every stab landing late
+    const {R,prog,tonicMidi}=ctx; const mel=[];
+    for(let i=0;i<8;i++){
+      const b=bass(prog,i,tonicMidi,-2);
+      for(let k=0;k<4;k++) mel.push([T(i,k,0),midiToN(b),"4n",k===0?0.95:0.68]);
+      const ch=barChord(prog,i,tonicMidi,1);
+      [[0,3],[1,2],[2,3],[3,1]].forEach(([q,s],k)=>{   // nothing lands on the beat
+        ch.forEach(n=>mel.push([T(i,q,s),midiToN(clampMidi(n)),"16n",0.74-k*0.06]));
+      });
+      if(i%4===3) mel.push([T(i,3,3),midiToN(clampMidi(ch[ch.length-1]+12)),"8n",0.88]);
+    }
+    return {melody:mel,mood:'aggro'};
+  },
+  fathom(ctx){ // FATHOM — chromatic march down to the floor of the range
+    const {R,prog,tonicMidi}=ctx; const mel=[];
+    for(let i=0;i<8;i++){
+      const ch=barChord(prog,i,tonicMidi,0);
+      const start=ch[ch.length-1];
+      for(let k=0;k<8;k++){
+        const n=clampMidi(start-k);
+        mel.push([T(i,k>>1,(k%2)*2),midiToN(n),"8n",0.60+(k===0?0.30:0)]);
+        if(k%2===0) mel.push([T(i,k>>1,0),midiToN(clampMidi(n-24)),"4n",0.85]);
+      }
+      if(i%2===1) mel.push([T(i,3,2),midiToN(bass(prog,i,tonicMidi,-3)),"4n",1.0]);
+    }
+    return {melody:mel,mood:'aggro'};
+  },
 };
 
-const CALM  = ['rolling','wideSigh','pedalPing','harpBloom','counterpoint','rolled9'];
-const AGGRO = ['octane','surge','fallingChords','relentless','machine','doom'];
+const CALM  = ['rolling','wideSigh','pedalPing','harpBloom','counterpoint','rolled9',
+               'lull','moonpool','silt','drift'];
+const AGGRO = ['octane','surge','fallingChords','relentless','machine','doom',
+               'tremor','breaker','trough','fathom'];
 
 // name pool — sunken0x / ocean lexicon, 120 words
 const NAMES = ("SURFACE UNDERTOW SONAR GLASS SALT LULL HALFLIGHT MOONPOOL PRESSURE RIPTIDE COLLAPSE SIREN TREMOR BREAKER STATIC ABYSS "+
@@ -1236,16 +1349,27 @@ const NAMES = ("SURFACE UNDERTOW SONAR GLASS SALT LULL HALFLIGHT MOONPOOL PRESSU
 "WATERLINE WHARF WHIRLPOOL WINCH WRECK ZEPHYR ANTHRACITE COBALT DUSK FROST GRAVITY HOLLOWAY IRON LEVIATHAN "+
 "MIDNIGHT OBSIDIAN").trim().split(/\s+/);
 
-function composeMotif(seed){
+// every pattern in one list, calm first — the order the ← / → keys walk
+const ALL_ARCHES = [...CALM, ...AGGRO];
+
+// Audition override. null = the piece plays the pattern its own seed chose.
+// Set by ← / →; cleared the moment the hash changes, so a piece is never
+// misrepresented as sounding like something its seed did not pick.
+let archOverride = null;
+
+function composeMotif(seed, override){
   const R = rngFrom(seed*2654435761 + 12345);
   const isCalm = (seed % 2 === 0);            // alternate so list interleaves; chaos aligns per-variation
   const archName = pick(R, isCalm?CALM:AGGRO);
   const prog = pick(R, PROGS);
   const tonicPc = pick(R, TONICS);
   const tonicMidi = PCI[tonicPc] + 12*2;      // tonic at octave 2 baseline
-  const {melody,mood} = ARCHETYPES[archName]({R,prog,tonicMidi});
+  // the three picks above always consume R in the same order, so an override
+  // swaps the pattern ONLY — key and progression stay as the seed wrote them
+  const use = (override && ARCHETYPES[override]) ? override : archName;
+  const {melody,mood} = ARCHETYPES[use]({R,prog,tonicMidi});
   const name = NAMES[seed % NAMES.length];
-  return { name, mood, loopBars:8, melody, arch:archName, key:tonicPc };
+  return { name, mood, loopBars:8, melody, arch:use, key:tonicPc };
 }
 
 function buildMotifs(n){ const out=[]; for(let s=0;s<n;s++) out.push(composeMotif(s)); return out; }
@@ -1413,6 +1537,11 @@ function shiftNote(noteName, semis) {
   return newPc + newOct;
 }
 
+// ↑ / ↓ transpose the whole instrument live, in octaves. Applied at trigger
+// time rather than baked into the part, so the register moves the instant you
+// press it — no rebuild, no gap in the loop. Range ±2 octaves.
+let octaveShiftLive = 0;
+
 function buildPart(motif, transposeSemis, octaveShift, velMul) {
   if (part) { try { part.stop(0); part.dispose(); } catch(e){} part = null; }
   const totalSemis = transposeSemis + octaveShift * 12;
@@ -1423,10 +1552,12 @@ function buildPart(motif, transposeSemis, octaveShift, velMul) {
     vel: Math.max(0.05, Math.min(1, v * velMul))
   }));
   part = new Tone.Part((time, ev) => {
-    activeSynth.triggerAttackRelease(ev.note, ev.dur, time, ev.vel);
+    // live octave applied here so the ripple is tinted by the note you HEAR
+    const n = octaveShiftLive ? shiftNote(ev.note, octaveShiftLive * 12) : ev.note;
+    activeSynth.triggerAttackRelease(n, ev.dur, time, ev.vel);
     Tone.Draw.schedule(() => {
       const nowMs = performance.now() - tStart;
-      spawnRipple(ev.note, ev.vel, nowMs);
+      spawnRipple(n, ev.vel, nowMs);
     }, time);
   }, events);
   part.loop = true;
@@ -1560,9 +1691,12 @@ function hashToSeed(hex) {
 
 function deriveFromHash(hex) {
   const seed  = hashToSeed(hex);
-  const motif = composeMotif(seed);
+  const base  = composeMotif(seed);                                  // the piece as its seed wrote it
+  const motif = archOverride ? composeMotif(seed, archOverride) : base;
   const R     = rngFrom(seed ^ 0x9e3779b9);
-  const chaos = motif.mood === "calm" ? 1 + Math.floor(R() * 5) : 5 + Math.floor(R() * 5);
+  // chaos follows the SEED's own mood, never the override — so auditioning a
+  // pattern leaves the colour, tempo, wave and chaos of the piece untouched
+  const chaos = base.mood === "calm" ? 1 + Math.floor(R() * 5) : 5 + Math.floor(R() * 5);
   let moods;
   if (chaos <= 3)      moods = ["smooth"];
   else if (chaos <= 5) moods = ["smooth", "mid"];
@@ -1573,6 +1707,7 @@ function deriveFromHash(hex) {
   return {
     chaos, chaosLabel: CHAOS_LABELS[chaos],
     motif, voice: "fm",
+    archTrue: base.arch,                  // what the seed picked, regardless of any override
     scheme:         SCHEMES[Math.floor(R() * SCHEMES.length)],
     waveIdx:        pool[Math.floor(R() * pool.length)],
     orientation:    R() < 0.5 ? "horizontal" : "vertical",
@@ -1584,15 +1719,32 @@ function deriveFromHash(hex) {
 
 let currentHash = "0x";
 let currentLabel = "";   // human label for the current source (wallet / block)
-function renderHash(hex) {
-  currentHash = hex;
-  const p = deriveFromHash(hex);
-  apply(p);
-  const src = currentLabel || (hex.slice(0, 10) + "…" + hex.slice(-6));
+// Repaints the readout without rebuilding the piece — the live octave changes
+// nothing about the composition, so it must not restart the loop.
+function paintReadout(p) {
+  p = p || deriveFromHash(currentHash);
+  const src  = currentLabel || (currentHash.slice(0, 10) + "…" + currentHash.slice(-6));
+  const bits = [archOverride
+    ? "pattern <b>" + p.motif.arch + "</b> <i>auditioning</i>"
+    : "pattern " + p.motif.arch];
+  if (octaveShiftLive) bits.push("octave <b>" + (octaveShiftLive > 0 ? "+" : "") + octaveShiftLive + "</b>");
+  const hint = (archOverride || octaveShiftLive)
+    ? "<span class='dim'>esc to reset</span>"
+    : "<span class='dim'>← → pattern &middot; ↑ ↓ octave</span>";
   readoutEl.innerHTML =
     "<b>" + p.motif.name + "</b> &nbsp; " + p.motif.key + " &middot; " + p.tempo + " bpm<br>" +
     p.scheme.name + " &middot; " + WAVE_PATTERNS[p.waveIdx].name + " &middot; chaos " + p.chaos + "<br>" +
+    bits.join(" &middot; ") + " &nbsp; " + hint + "<br>" +
     "from " + src;
+}
+
+function renderHash(hex) {
+  // a different piece always plays its own pattern — an audition never carries over
+  if (hex !== currentHash) archOverride = null;
+  currentHash = hex;
+  const p = deriveFromHash(hex);
+  apply(p);
+  paintReadout(p);
 }
 
 function rollHash() {
@@ -1706,6 +1858,39 @@ window.addEventListener("keydown", (e) => {
   if (e.target.tagName && /^(INPUT|TEXTAREA)$/.test(e.target.tagName)) return;
   if (e.key === " ") { e.preventDefault(); if (Tone.Transport.state === "started") stopAudio(); else startAudio(); }
   else if (e.key === "r" || e.key === "R") { startAudio(); currentLabel = ""; const h = rollHash(); renderHash(h); updateURL(); }
+  // ← / → walk all 20 patterns on the SAME piece: key, chords, colour and
+  // chaos hold still, only the pattern changes. Esc returns the seed's own.
+  else if (e.key === "ArrowRight" || e.key === "ArrowLeft") {
+    e.preventDefault();
+    if (!document.body.classList.contains("started")) return;   // nothing plays behind the veil
+    const cur  = archOverride || deriveFromHash(currentHash).motif.arch;
+    const step = e.key === "ArrowRight" ? 1 : -1;
+    const i    = ALL_ARCHES.indexOf(cur);
+    archOverride = ALL_ARCHES[(i + step + ALL_ARCHES.length) % ALL_ARCHES.length];
+    startAudio();
+    renderHash(currentHash);
+    showToast(archOverride + "  " + (ALL_ARCHES.indexOf(archOverride) + 1) + "/" + ALL_ARCHES.length);
+  }
+  // ↑ / ↓ play the instrument up and down the register, live and instant
+  else if (e.key === "ArrowUp" || e.key === "ArrowDown") {
+    e.preventDefault();
+    if (!document.body.classList.contains("started")) return;   // nothing plays behind the veil
+    const was = octaveShiftLive;
+    octaveShiftLive = e.key === "ArrowUp" ? Math.min(2, was + 1) : Math.max(-2, was - 1);
+    if (octaveShiftLive === was) { showToast(was > 0 ? "top of the range" : "bottom of the range"); return; }
+    startAudio();
+    paintReadout();
+    const n = octaveShiftLive;
+    showToast(n === 0 ? "home octave"
+                      : (n > 0 ? "+" : "") + n + " octave" + (Math.abs(n) > 1 ? "s" : ""));
+  }
+  else if (e.key === "Escape") {
+    if (!archOverride && !octaveShiftLive) return;
+    e.preventDefault();
+    archOverride = null; octaveShiftLive = 0;
+    renderHash(currentHash);
+    showToast("back to the seed's own piece");
+  }
 });
 
 // the landing piece should read as striking, not a flat calm roll — bias the
