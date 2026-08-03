@@ -1896,18 +1896,44 @@ function shiftNote(noteName, semis) {
 // press it — no rebuild, no gap in the loop. Range ±2 octaves.
 let octaveShiftLive = 0;
 
+
+// PLAYABLE RANGE FOLD.
+// The engine writes nothing below C2 because the Kawai's bottom two samples are
+// the muddiest part of the instrument. But transpose (-5..+5) and octave shift
+// (-1..+1) are applied HERE, at playback, and together they were dragging notes
+// as low as MIDI 15 — nine semitones under the lowest sample, so the sampler
+// pitch-shifted C1 down into sludge. That is what made whale wallets with a
+// negative octave roll sound broken.
+//
+// Folding by octaves keeps the pitch class, so the harmony is untouched; only
+// the register moves, and only when it had left the sampled range.
+const PLAY_LO = 36, PLAY_HI = 96;   // C2 .. C7, the registered sample span
+function foldPlayable(noteName) {
+  const m = noteName.match(/^([A-G])(#|b)?(-?\d+)$/);
+  if (!m) return noteName;
+  const FLAT_TO_SHARP = {Db:"C#", Eb:"D#", Gb:"F#", Ab:"G#", Bb:"A#"};
+  let pc = m[1] + (m[2] === "b" ? "b" : (m[2] || ""));
+  if (FLAT_TO_SHARP[pc]) pc = FLAT_TO_SHARP[pc];
+  const idx = NOTE_ORDER.indexOf(pc);
+  if (idx < 0) return noteName;
+  let midi = (parseInt(m[3], 10) + 1) * 12 + idx;
+  while (midi < PLAY_LO) midi += 12;
+  while (midi > PLAY_HI) midi -= 12;
+  return NOTE_ORDER[((midi % 12) + 12) % 12] + (Math.floor(midi / 12) - 1);
+}
+
 function buildPart(motif, transposeSemis, octaveShift, velMul) {
   if (part) { try { part.stop(0); part.dispose(); } catch(e){} part = null; }
   const totalSemis = transposeSemis + octaveShift * 12;
   const events = motif.melody.map(([t, n, d, v]) => ({
     time: t,
-    note: shiftNote(n, totalSemis),
+    note: foldPlayable(shiftNote(n, totalSemis)),
     dur: d,
     vel: Math.max(0.05, Math.min(1, v * velMul))
   }));
   part = new Tone.Part((time, ev) => {
     // live octave applied here so the ripple is tinted by the note you HEAR
-    const n = octaveShiftLive ? shiftNote(ev.note, octaveShiftLive * 12) : ev.note;
+    const n = octaveShiftLive ? foldPlayable(shiftNote(ev.note, octaveShiftLive * 12)) : ev.note;
     activeSynth.triggerAttackRelease(n, ev.dur, time, ev.vel);
     Tone.Draw.schedule(() => {
       const nowMs = performance.now() - tStart;
@@ -1922,6 +1948,9 @@ function buildPart(motif, transposeSemis, octaveShift, velMul) {
 /* ============================================================
    DERIVE PARAMS FROM HASH (deterministic per-token state)
    ============================================================ */
+// SUPERSEDED 2026-08-01 by AM125.derive — the 125-composition calibrated engine.
+// Kept for reference only. NOTHING CALLS THIS. It is the old 15-motif v1 draw;
+// wiring it back would desync the site from the audition and whales pages.
 function deriveParams(hashHex, chaosOverride, schemeOverride, waveOverride) {
   const rng = new Random(hashHex);
   const chaos = chaosOverride ?? rng.int(1, 9);
@@ -2080,7 +2109,7 @@ let currentLabel = "";   // human label for the current source (wallet / block)
 // Repaints the readout without rebuilding the piece — the live octave changes
 // nothing about the composition, so it must not restart the loop.
 function paintReadout(p) {
-  p = p || deriveParams(currentHash);
+  p = p || AM125.derive(currentHash);
   const src  = currentLabel || (currentHash.slice(0, 10) + "…" + currentHash.slice(-6));
   const bits = [];
   if (octaveShiftLive) bits.push("octave <b>" + (octaveShiftLive > 0 ? "+" : "") + octaveShiftLive + "</b>");
@@ -2093,6 +2122,2238 @@ function paintReadout(p) {
     (bits.length ? bits.join(" &middot; ") + " &nbsp; " : "") + hint + "<br>" +
     "from " + src;
 }
+
+
+
+/* ==================================================================
+   AM125 — THE ENGINE.  Generated, do not hand-edit.
+   125 compositions - 27 written note by note, 98 built from the chord
+   of the bar. Calibrated so the 6529 Memes contract composes
+   WHISPER / 116bpm / Cold Iron, the exact piece the on-chain card plays.
+
+   LOCKED CONSTANTS. Changing any of these re-rolls the whole collection:
+     salt 579701
+     pool sizes  composition 125, chaos 9, palette 15, transpose 11, octave 3, orientation 2
+     draw order  composition -> chaos -> palette -> transpose -> octave -> orientation
+     catalog order — the card's 15, then the 12 hand written, then the 98 algo.
+                     WHISPER must stay at index 6.
+
+   The wave is deliberately OUTSIDE this scheme: it draws last, from a subpool
+   gated by chaos, and nothing before it can be disturbed by changing it.
+   ================================================================== */
+const AM125 = (function () {
+  "use strict";
+
+  const SALT    = 579701;
+  const POOLS   = {"composition":125,"chaos":9,"palette":15,"transpose":11,"octave":3,"orientation":2};
+  const OFFSETS = {"composition":45,"chaos":3,"palette":10,"transpose":6,"octave":0,"orientation":1};
+  const ORDER   = ["composition","chaos","palette","transpose","octave","orientation"];
+
+  function seedOf(hex) {
+    const h = (hex || "").replace(/^0x/i, "").toLowerCase() || "0";
+    let s = (2166136261 ^ SALT) >>> 0;
+    for (let i = 0; i < h.length; i++) { s ^= h.charCodeAt(i); s = Math.imul(s, 16777619); }
+    return s >>> 0;
+  }
+  function rng(seed) {
+    let a = (seed >>> 0) || 1;
+    return function () { a |= 0; a = a + 0x6D2B79F5 | 0;
+      let t = Math.imul(a ^ a >>> 15, 1 | a);
+      t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t;
+      return ((t ^ t >>> 14) >>> 0) / 4294967296; };
+  }
+
+  const PATS  = (function(){
+const PCN = ['C','C#','D','D#','E','F','F#','G','G#','A','A#','B'];
+const PCI = {}; PCN.forEach((n,i)=>PCI[n]=i);
+function midiToN(m){ m=Math.round(m); return PCN[((m%12)+12)%12] + (Math.floor(m/12)-1); }
+const LO=36, HI=96; // clamp to C2..C7 — below C2 the sampled piano turns to mud
+// REGISTER LIFT — applies to the BASS ONLY. The floor is C2 because the
+// Kawai's bottom two samples (C1, G1) are the muddiest part of the
+// instrument. But the hand-written tunes live happily in C2-C3 and sound
+// good there, so chords are NOT lifted: doing that thinned the low-mid and
+// made the algo set half as full as the hand set.
+const REG = 12;
+
+function clampMidi(m){ while(m<LO)m+=12; while(m>HI)m-=12; return m; }
+
+// mulberry32 seeded RNG
+function rngFrom(seed){
+  let a = (seed>>>0) || 1;
+  return () => {
+    a |= 0; a = a + 0x6D2B79F5 | 0;
+    let t = Math.imul(a ^ a>>>15, 1 | a);
+    t = t + Math.imul(t ^ t>>>7, 61 | t) ^ t;
+    return ((t ^ t>>>14) >>> 0) / 4294967296;
+  };
+}
+const pick = (R,arr)=>arr[Math.floor(R()*arr.length)];
+const T = (b,q,s)=>b+":"+q+":"+s;
+
+// chord quality -> intervals from root
+const QUAL = {
+  min:[0,3,7], maj:[0,4,7], min7:[0,3,7,10], maj7:[0,4,7,11],
+  min9:[0,3,7,10,14], maj9:[0,4,7,11,14], add9:[0,4,7,14],
+  sus2:[0,2,7], sus4:[0,5,7], pow:[0,7,12], dim:[0,3,6]
+};
+function chord(rootMidi, qual){ return QUAL[qual].map(iv=>rootMidi+iv); }
+
+// 8-bar progressions, [semitoneFromTonic, quality] per bar.
+// FOUR MODE FAMILIES, 8 each. Until 2026-07-28 all 8 progressions drew from one
+// natural-minor palette (i III iv v VI VII — six chords for the whole collection),
+// which is why every piece sounded related no matter which pattern played it.
+// Major / dorian / phrygian each have a signature chord the others cannot make:
+// dorian's MAJOR IV, phrygian's bII, major's V-I. That is the real variety lever.
+const PROGS = [
+  // ---- NATURAL MINOR (the original eight, unchanged) ----
+  [[0,'min9'],[0,'min9'],[8,'maj7'],[8,'maj7'],[3,'maj7'],[3,'maj7'],[10,'maj'],[10,'maj']],
+  [[0,'min'],[10,'maj'],[8,'maj7'],[10,'maj'],[0,'min'],[10,'maj'],[5,'min7'],[7,'maj']],
+  [[0,'min9'],[5,'min7'],[8,'maj7'],[7,'maj'],[0,'min9'],[5,'min7'],[3,'maj7'],[7,'maj']],
+  [[0,'add9'],[3,'maj9'],[8,'maj7'],[5,'min7'],[0,'add9'],[3,'maj9'],[10,'maj'],[7,'maj']],
+  [[5,'min7'],[0,'min9'],[7,'maj'],[8,'maj7'],[5,'min7'],[0,'min9'],[10,'maj'],[7,'maj']],
+  [[0,'min'],[0,'min'],[5,'min'],[5,'min'],[10,'maj'],[10,'maj'],[7,'maj'],[7,'maj']],
+  [[8,'maj7'],[7,'maj'],[5,'min7'],[3,'maj7'],[0,'min9'],[10,'maj'],[8,'maj7'],[7,'maj']],
+  [[0,'min7'],[3,'maj7'],[7,'maj'],[10,'maj'],[8,'maj7'],[5,'min7'],[0,'min7'],[7,'maj']],
+
+  // ---- MAJOR (I ii iii IV V vi) — light, open, resolves home ----
+  [[0,'maj9'],[0,'maj9'],[9,'min7'],[9,'min7'],[5,'maj7'],[5,'maj7'],[7,'maj'],[7,'maj']],
+  [[0,'maj'],[7,'maj'],[9,'min7'],[5,'maj7'],[0,'maj'],[7,'maj'],[5,'maj7'],[7,'maj']],
+  [[0,'add9'],[5,'maj9'],[9,'min7'],[7,'maj'],[0,'add9'],[5,'maj9'],[2,'min7'],[7,'maj']],
+  [[9,'min7'],[5,'maj7'],[0,'maj9'],[7,'maj'],[9,'min7'],[5,'maj7'],[2,'min7'],[7,'maj']],
+  [[0,'maj7'],[4,'min7'],[9,'min7'],[5,'maj7'],[0,'maj7'],[4,'min7'],[7,'maj'],[7,'maj']],
+  [[0,'sus2'],[0,'maj'],[5,'sus2'],[5,'maj7'],[7,'sus4'],[7,'maj'],[0,'maj9'],[0,'maj9']],
+  [[5,'maj7'],[7,'maj'],[0,'maj9'],[9,'min7'],[5,'maj7'],[7,'maj'],[0,'maj9'],[0,'maj9']],
+  [[0,'maj'],[9,'min'],[5,'maj'],[7,'maj'],[0,'maj'],[9,'min'],[2,'min7'],[7,'maj']],
+
+  // ---- DORIAN (i ii III IV v vi°) — minor with a MAJOR IV, the hopeful one ----
+  [[0,'min7'],[0,'min7'],[5,'maj'],[5,'maj'],[10,'maj'],[10,'maj'],[0,'min7'],[0,'min7']],
+  [[0,'min9'],[5,'maj7'],[10,'maj'],[2,'min7'],[0,'min9'],[5,'maj7'],[10,'maj'],[0,'min9']],
+  [[0,'min'],[2,'min7'],[5,'maj'],[0,'min'],[10,'maj'],[5,'maj'],[2,'min7'],[0,'min']],
+  [[0,'min7'],[10,'maj'],[5,'maj'],[10,'maj'],[0,'min7'],[10,'maj'],[3,'maj7'],[5,'maj']],
+  [[5,'maj'],[0,'min9'],[5,'maj'],[0,'min9'],[10,'maj'],[2,'min7'],[5,'maj'],[0,'min9']],
+  [[0,'min9'],[0,'min9'],[2,'min7'],[2,'min7'],[5,'maj7'],[5,'maj7'],[10,'maj'],[10,'maj']],
+  [[0,'sus2'],[0,'min7'],[5,'maj'],[5,'add9'],[10,'maj'],[10,'sus4'],[0,'min7'],[0,'min7']],
+  [[10,'maj'],[5,'maj'],[0,'min7'],[2,'min7'],[10,'maj'],[5,'maj'],[0,'min7'],[0,'min7']],
+
+  // ---- PHRYGIAN (i bII III iv VI vii) — the bII is the dread, spanish/dark ----
+  [[0,'min'],[1,'maj'],[0,'min'],[1,'maj'],[0,'min'],[1,'maj'],[10,'maj'],[0,'min']],
+  [[0,'min9'],[1,'maj7'],[3,'maj'],[1,'maj'],[0,'min9'],[1,'maj7'],[8,'maj7'],[0,'min9']],
+  [[0,'min'],[0,'min'],[1,'maj'],[1,'maj'],[8,'maj7'],[8,'maj7'],[5,'min'],[5,'min']],
+  [[0,'pow'],[1,'maj'],[10,'maj'],[0,'pow'],[0,'pow'],[1,'maj'],[8,'maj'],[0,'pow']],
+  [[1,'maj7'],[0,'min9'],[8,'maj7'],[10,'maj'],[1,'maj7'],[0,'min9'],[3,'maj7'],[0,'min9']],
+  [[0,'min7'],[3,'maj7'],[1,'maj7'],[0,'min7'],[5,'min7'],[1,'maj'],[10,'maj'],[0,'min7']],
+  [[0,'min'],[1,'maj'],[5,'min'],[1,'maj'],[0,'min'],[1,'maj'],[8,'maj'],[10,'maj']],
+  [[0,'dim'],[1,'maj'],[0,'min'],[8,'maj7'],[0,'dim'],[1,'maj'],[3,'maj7'],[0,'min']],
+];
+// tonic pitch-classes to spread keys across the 100
+const TONICS = ['A','D','E','C','G','B','F#'];
+
+// ---- pentatonic + scale helpers for melody ----
+const MINPENT = [0,3,5,7,10];
+function scaleNote(tonicPc, degOffsetSemis){ return tonicPc + degOffsetSemis; }
+
+// ---------- ARCHETYPES ----------
+// each returns { melody, mood }. ctx = { R, prog, tonicMidi }
+// tonicMidi is the tonic pitch at octave 2 (e.g. A2). Registers built relative.
+
+// ROOT BAND — the tonic should change the KEY, not the REGISTER. Five of the
+// seven tonics sit above A, so without this a piece in G came out a fourth
+// higher than the same piece in A and lost its low-mid entirely. Folding the
+// root into a fixed band keeps every key in the same part of the keyboard.
+const ROOT_LO = 45, ROOT_HI = 56;
+const rootFold = m => { while (m > ROOT_HI) m -= 12; while (m < ROOT_LO) m += 12; return m; };
+function bass(prog, i, tonicMidi, oct){ // root of bar i at given octave offset (in octaves)
+  return clampMidi(rootFold(tonicMidi + prog[i%prog.length][0]) + oct*12 + REG);
+}
+function barChord(prog, i, tonicMidi, oct){
+  const [semi,q] = prog[i%prog.length];
+  return chord(clampMidi(rootFold(tonicMidi+semi)+oct*12), q);
+}
+
+const ARCHETYPES = {
+  // --- CALM ---
+  rolling(ctx){ // SURFACE — bass whole + 8th arp + top arc
+    const {R,prog,tonicMidi}=ctx; const mel=[];
+    for(let i=0;i<8;i++){
+      const b=bass(prog,i,tonicMidi,-1); mel.push([T(i,0,0),midiToN(b),"1n",0.42]);
+      const ch=barChord(prog,i,tonicMidi,1);
+      const arp=[ch[0],ch[1],ch[2%ch.length],ch[Math.min(3,ch.length-1)],ch[2%ch.length],ch[1],ch[0],ch[1]];
+      // clamp here too: barChord clamps the ROOT, then chord() stacks intervals
+      // on top of it, so a wide voicing can still run past the ceiling.
+      arp.forEach((n,k)=>mel.push([T(i,k>>1,(k%2)*2),midiToN(clampMidi(n)),"8n",0.20+0.10*Math.sin(Math.PI*k/7)]));
+      const top=ch[ch.length-1]+12;
+      mel.push([T(i,0,0),midiToN(clampMidi(top)),"2n",0.52]);
+      if(i%2===1) mel.push([T(i,2,0),midiToN(clampMidi(ch[Math.max(0,ch.length-2)]+12)),"2n",0.44]);
+    }
+    return {melody:mel,mood:'calm'};
+  },
+  wideSigh(ctx){ // UNDERTOW — bass, fifth, tenth + 2-note sighs
+    const {R,prog,tonicMidi}=ctx; const mel=[];
+    for(let i=0;i<8;i++){
+      const b=bass(prog,i,tonicMidi,-1);
+      mel.push([T(i,0,0),midiToN(b),"1n",0.46]);
+      mel.push([T(i,0,2),midiToN(clampMidi(b+7)),"2n.",0.30]);
+      const ch=barChord(prog,i,tonicMidi,1);
+      mel.push([T(i,1,0),midiToN(ch[1]),"2n",0.34]);
+      const hi=clampMidi(ch[ch.length-1]+12), lo=clampMidi(ch[Math.max(0,ch.length-2)]+12);
+      mel.push([T(i,1,2),midiToN(hi),"2n",0.52]);
+      mel.push([T(i,3,0),midiToN(lo),"2n",0.42]);
+    }
+    return {melody:mel,mood:'calm'};
+  },
+  pedalPing(ctx){ // SONAR — deep pedal + sparse high pings w/ echoes
+    const {R,prog,tonicMidi}=ctx; const mel=[];
+    for(let i=0;i<8;i++){
+      mel.push([T(i,0,0),midiToN(bass(prog,i,tonicMidi,-2)),"1n",0.50]);
+      if(i===3||i===7){const ch=barChord(prog,i,tonicMidi,0);mel.push([T(i,2,0),midiToN(ch[0]),"2n",0.24]);mel.push([T(i,2,0),midiToN(ch[1]),"2n",0.20]);}
+    }
+    for(let bar=0;bar<8;bar+=2){
+      const ch=barChord(prog,bar,tonicMidi,2); const n=clampMidi(ch[ch.length-1]+12);
+      mel.push([T(bar,1,0),midiToN(n),"2n",0.50]);
+      mel.push([T(bar,3,0),midiToN(n),"2n",0.26]);
+      mel.push([T((bar+1)%8,1,0),midiToN(n),"1n",0.15]);
+    }
+    return {melody:mel,mood:'calm'};
+  },
+  harpBloom(ctx){ // GLASS — bass + ascending run + hold
+    const {R,prog,tonicMidi}=ctx; const mel=[];
+    for(let c=0;c<4;c++){
+      const b0=c*2; const ch=barChord(prog,b0,tonicMidi,1);
+      const run=[ch[0],ch[1],ch[2%ch.length],clampMidi(ch[ch.length-1]+ (R()<0.5?6:12)),clampMidi(ch[0]+12)];
+      mel.push([T(b0,0,0),midiToN(bass(prog,b0,tonicMidi,-2)),"1n",0.38]);
+      run.forEach((n,k)=>mel.push([T(b0,k>>2,k%4),midiToN(clampMidi(n)),"16n",0.20+k*0.05]));
+      mel.push([T(b0,1,1),midiToN(clampMidi(run[4])),"2n.",0.52]);
+      mel.push([T(b0+1,0,0),midiToN(bass(prog,b0,tonicMidi,-2)),"1n",0.32]);
+      mel.push([T(b0+1,2,0),midiToN(clampMidi(run[2])),"2n",0.30]);
+    }
+    return {melody:mel,mood:'calm'};
+  },
+  counterpoint(ctx){ // SALT — two voices over falling bass
+    const {R,prog,tonicMidi}=ctx; const mel=[];
+    for(let i=0;i<8;i++){
+      mel.push([T(i,0,0),midiToN(bass(prog,i,tonicMidi,-1)),"1n",0.42]);
+      const ch=barChord(prog,i,tonicMidi,0);
+      const tenor=[ch[1],ch[2%ch.length],ch[1],ch[0]];
+      tenor.forEach((n,k)=>mel.push([T(i,k,0),midiToN(clampMidi(n+12)),"4n",0.30]));
+      const sop=clampMidi(ch[ch.length-1]+12);
+      mel.push([T(i,(i%2)?0:2,0),midiToN(sop),"2n",0.50]);
+    }
+    return {melody:mel,mood:'calm'};
+  },
+  rolled9(ctx){ // HALFLIGHT — rolled maj9/min9 + top climb
+    const {R,prog,tonicMidi}=ctx; const mel=[];
+    for(let i=0;i<8;i++){
+      mel.push([T(i,0,0),midiToN(bass(prog,i,tonicMidi,-2)),"1n",0.44]);
+      const ch=barChord(prog,i,tonicMidi,1);
+      ch.forEach((n,k)=>mel.push([T(i,k>>2,k%4),midiToN(clampMidi(n)),"1n",0.24+k*0.02]));
+      const top=clampMidi(ch[ch.length-1]+12);
+      mel.push([T(i,1,1),midiToN(top),"2n",0.52]);
+      mel.push([T(i,3,0),midiToN(top),"4n",0.28]);
+    }
+    return {melody:mel,mood:'calm'};
+  },
+  lull(ctx){ // LULL — cradle rock, a 3-beat figure drifting against a 4-beat bar
+    const {R,prog,tonicMidi}=ctx; const mel=[];
+    for(let i=0;i<8;i++){
+      mel.push([T(i,0,0),midiToN(bass(prog,i,tonicMidi,-2)),"1n",0.40]);
+      const ch=barChord(prog,i,tonicMidi,1);
+      const rock=[ch[0],ch[2%ch.length]];
+      for(let k=0;k<4;k++){
+        const step=(i*4+k)%3;                     // 3-against-4: the figure walks
+        const n=clampMidi(rock[step%2]+(step===2?12:0));
+        mel.push([T(i,k,0),midiToN(n),"4n",0.26+(step===0?0.12:0)]);
+      }
+      if(i%4===3) mel.push([T(i,2,2),midiToN(clampMidi(ch[ch.length-1]+12)),"2n",0.44]);
+    }
+    return {melody:mel,mood:'calm'};
+  },
+  moonpool(ctx){ // MOONPOOL — music box: high ostinato cell, chords moving beneath
+    const {R,prog,tonicMidi}=ctx; const mel=[];
+    for(let i=0;i<8;i++){
+      if(i%2===0) mel.push([T(i,0,0),midiToN(bass(prog,i,tonicMidi,-2)),"1n",0.38]);
+      const ch=barChord(prog,i,tonicMidi,2);
+      const cell=[ch[ch.length-1],ch[1],ch[0],ch[1]].map(n=>clampMidi(n+12));
+      for(let k=0;k<8;k++) mel.push([T(i,k>>1,(k%2)*2),midiToN(cell[k%4]),"8n",0.18+(k%4===0?0.14:0)]);
+      if(i%4===1) mel.push([T(i,2,0),midiToN(clampMidi(ch[0])),"2n",0.34]);
+    }
+    return {melody:mel,mood:'calm'};
+  },
+  silt(ctx){ // SILT — a settling descent, top of the chord walking down an octave
+    const {R,prog,tonicMidi}=ctx; const mel=[];
+    for(let i=0;i<8;i++){
+      mel.push([T(i,0,0),midiToN(bass(prog,i,tonicMidi,-2)),"1n",0.44]);
+      const ch=barChord(prog,i,tonicMidi,0);
+      if(i%2===0) ch.forEach(n=>mel.push([T(i,0,0),midiToN(clampMidi(n)),"1n",0.22]));
+      const top=ch[ch.length-1]+12;
+      const fall=[top,top-2,top-3,top-5,top-7,top-8,top-10,top-12];
+      for(let k=0;k<4;k++) mel.push([T(i,k,0),midiToN(clampMidi(fall[(i%2)*4+k])),"4n",0.46-k*0.05]);
+    }
+    return {melody:mel,mood:'calm'};
+  },
+  hail(ctx){ // HAIL — call and response, a low phrase answered high, space between
+            // (renamed from 'drift': it never drifted, and DRIFT is one of the
+            //  card's fixed 15, which is anchored on chain and cannot move)
+    const {R,prog,tonicMidi}=ctx; const mel=[];
+    for(let i=0;i<8;i++){
+      const ch=barChord(prog,i,tonicMidi,0);
+      if((i%4)<2){                                 // the call, low and slow
+        mel.push([T(i,0,0),midiToN(bass(prog,i,tonicMidi,-2)),"2n.",0.46]);
+        [ch[0],ch[1]].forEach((n,k)=>mel.push([T(i,k*2,0),midiToN(clampMidi(n)),"2n",0.32-k*0.04]));
+      } else {                                     // the answer, two octaves up
+        const hi=[ch[ch.length-1],ch[2%ch.length],ch[1]].map(n=>clampMidi(n+24));
+        hi.forEach((n,k)=>mel.push([T(i,k+1,0),midiToN(n),"4n",0.42-k*0.06]));
+        if(i%4===3) mel.push([T(i,0,0),midiToN(bass(prog,i,tonicMidi,-1)),"1n",0.30]);
+      }
+    }
+    return {melody:mel,mood:'calm'};
+  },
+
+  // --- AGGRO ---
+  octane(ctx){ // PRESSURE — octave bass 8ths + stabs + climb
+    const {R,prog,tonicMidi}=ctx; const mel=[];
+    for(let i=0;i<8;i++){
+      const lo=bass(prog,i,tonicMidi,-2), hi=clampMidi(lo+12);
+      for(let k=0;k<8;k++) mel.push([T(i,k>>1,(k%2)*2),midiToN(k%2?hi:lo),"8n",k===0?0.95:(k===4?0.85:0.6)]);
+      const ch=barChord(prog,i,tonicMidi,1);
+      ch.forEach(n=>{mel.push([T(i,1,2),midiToN(clampMidi(n)),"8n",0.72]);mel.push([T(i,3,2),midiToN(clampMidi(n)),"8n",0.64]);});
+      mel.push([T(i,2,0),midiToN(clampMidi(ch[ch.length-1]+12)),"2n",0.86]);
+    }
+    return {melody:mel,mood:'aggro'};
+  },
+  surge(ctx){ // RIPTIDE — 16th up then crash down
+    const {R,prog,tonicMidi}=ctx; const mel=[];
+    for(let i=0;i<8;i++){
+      const ch=barChord(prog,i,tonicMidi,0);
+      const ext=[ch[0],...ch.map(n=>clampMidi(n+12)),clampMidi(ch[0]+24)];
+      mel.push([T(i,0,0),midiToN(bass(prog,i,tonicMidi,-2)),"2n",0.9]);
+      mel.push([T(i,2,0),midiToN(bass(prog,i,tonicMidi,-2)),"2n",0.8]);
+      for(let k=0;k<8;k++) mel.push([T(i,k>>2,k%4),midiToN(clampMidi(ext[k%ext.length])),"16n",k%4===0?0.8:0.55]);
+      for(let k=0;k<8;k++) mel.push([T(i,2+(k>>2),k%4),midiToN(clampMidi(ext[(ext.length-1)-(k%ext.length)])),"16n",k%4===0?0.75:0.5]);
+    }
+    return {melody:mel,mood:'aggro'};
+  },
+  fallingChords(ctx){ // COLLAPSE — half-note chords + high pedal building
+    const {R,prog,tonicMidi}=ctx; const mel=[];
+    for(let i=0;i<8;i++){
+      const ch=barChord(prog,i,tonicMidi,0), b=bass(prog,i,tonicMidi,-2);
+      [0,2].forEach(beat=>{const v=beat===0?1.0:0.85;mel.push([T(i,beat,0),midiToN(b),"2n",v]);ch.forEach(n=>mel.push([T(i,beat,0),midiToN(clampMidi(n)),"2n",v*0.8]));});
+      const ped=clampMidi(ch[ch.length-1]+12);
+      for(let k=0;k<8;k++) mel.push([T(i,k>>1,(k%2)*2),midiToN(ped),"8n",0.35+(i%4)*0.1+(k%2)*0.08]);
+    }
+    return {melody:mel,mood:'aggro'};
+  },
+  relentless(ctx){ // SIREN — one high note vs shifting base, rising
+    const {R,prog,tonicMidi}=ctx; const mel=[];
+    const ch0=barChord(prog,0,tonicMidi,2); const high=clampMidi(ch0[0]+12);
+    for(let i=0;i<8;i++){
+      mel.push([T(i,0,0),midiToN(bass(prog,i,tonicMidi,-2)),"1n",0.95]);
+      const ch=barChord(prog,i,tonicMidi,0);
+      ch.forEach(n=>{mel.push([T(i,1,0),midiToN(clampMidi(n+12)),"4n",0.6]);mel.push([T(i,3,0),midiToN(clampMidi(n+12)),"4n",0.55]);});
+      for(let k=0;k<8;k++) mel.push([T(i,k>>1,(k%2)*2),midiToN(high),"8n",0.55+i*0.04+(k===0?0.12:0)]);
+    }
+    return {melody:mel,mood:'aggro'};
+  },
+  machine(ctx){ // STATIC — perpetual 16th cells
+    const {R,prog,tonicMidi}=ctx; const mel=[];
+    for(let i=0;i<8;i++){
+      const ch=barChord(prog,i,tonicMidi,1), b=bass(prog,i,tonicMidi,-1);
+      mel.push([T(i,0,0),midiToN(b),"2n",0.9]); mel.push([T(i,2,0),midiToN(b),"2n",0.8]);
+      const cell=[ch[ch.length-1],ch[1],ch[0],ch[1]].map(n=>clampMidi(n+12));
+      for(let k=0;k<16;k++) mel.push([T(i,k>>2,k%4),midiToN(cell[k%4]),"16n",k%4===0?0.78:0.5+(k%4)*0.03]);
+    }
+    return {melody:mel,mood:'aggro'};
+  },
+  doom(ctx){ // ABYSS — bottom fifths + falling glitter
+    const {R,prog,tonicMidi}=ctx; const mel=[];
+    for(let i=0;i<8;i++){
+      const b=bass(prog,i,tonicMidi,-3);
+      mel.push([T(i,0,0),midiToN(b),"1n",1.0]); mel.push([T(i,0,0),midiToN(clampMidi(b+7)),"1n",0.9]);
+      if(i%2===1){
+        const ch=barChord(prog,i,tonicMidi,2);
+        const glit=[...ch].reverse().map(n=>clampMidi(n+12));
+        for(let k=0;k<8;k++) mel.push([T(i,2+(k>>2),k%4),midiToN(glit[k%glit.length]),"16n",0.65-k*0.05]);
+      }
+    }
+    return {melody:mel,mood:'aggro'};
+  },
+  tremor(ctx){ // TREMOR — tremolo between two chord tones, shivering, building
+    const {R,prog,tonicMidi}=ctx; const mel=[];
+    for(let i=0;i<8;i++){
+      const b=bass(prog,i,tonicMidi,-2);
+      mel.push([T(i,0,0),midiToN(b),"2n",0.92]); mel.push([T(i,2,0),midiToN(b),"2n",0.80]);
+      const ch=barChord(prog,i,tonicMidi,1);
+      const a=clampMidi(ch[0]+12), c=clampMidi(ch[2%ch.length]+12);
+      for(let k=0;k<16;k++) mel.push([T(i,k>>2,k%4),midiToN(k%2?c:a),"16n",0.42+i*0.045+(k%4===0?0.14:0)]);
+    }
+    return {melody:mel,mood:'aggro'};
+  },
+  breaker(ctx){ // BREAKER — space, then the wave lands: off-beat cluster hits
+    const {R,prog,tonicMidi}=ctx; const mel=[];
+    for(let i=0;i<8;i++){
+      const ch=barChord(prog,i,tonicMidi,0), b=bass(prog,i,tonicMidi,-3);
+      mel.push([T(i,1,2),midiToN(b),"2n",1.0]);   // the hit, late on beat 2
+      ch.forEach(n=>{
+        mel.push([T(i,1,2),midiToN(clampMidi(n)),"2n",0.82]);
+        mel.push([T(i,1,2),midiToN(clampMidi(n+12)),"2n",0.70]);
+      });
+      if(i%2===1){                                 // the pull back before the next one
+        const top=clampMidi(ch[ch.length-1]+24);
+        for(let k=0;k<4;k++) mel.push([T(i,3,k),midiToN(clampMidi(top-k*2)),"16n",0.60-k*0.10]);
+      }
+    }
+    return {melody:mel,mood:'aggro'};
+  },
+  trough(ctx){ // TROUGH — driving low pulse, every stab landing late
+    const {R,prog,tonicMidi}=ctx; const mel=[];
+    for(let i=0;i<8;i++){
+      const b=bass(prog,i,tonicMidi,-2);
+      for(let k=0;k<4;k++) mel.push([T(i,k,0),midiToN(b),"4n",k===0?0.95:0.68]);
+      const ch=barChord(prog,i,tonicMidi,1);
+      [[0,3],[1,2],[2,3],[3,1]].forEach(([q,s],k)=>{   // nothing lands on the beat
+        ch.forEach(n=>mel.push([T(i,q,s),midiToN(clampMidi(n)),"16n",0.74-k*0.06]));
+      });
+      if(i%4===3) mel.push([T(i,3,3),midiToN(clampMidi(ch[ch.length-1]+12)),"8n",0.88]);
+    }
+    return {melody:mel,mood:'aggro'};
+  },
+  fathom(ctx){ // FATHOM — chromatic march down to the floor of the range
+    const {R,prog,tonicMidi}=ctx; const mel=[];
+    for(let i=0;i<8;i++){
+      const ch=barChord(prog,i,tonicMidi,0);
+      const start=ch[ch.length-1];
+      for(let k=0;k<8;k++){
+        const n=clampMidi(start-k);
+        mel.push([T(i,k>>1,(k%2)*2),midiToN(n),"8n",0.60+(k===0?0.30:0)]);
+        if(k%2===0) mel.push([T(i,k>>1,0),midiToN(clampMidi(n-24)),"4n",0.85]);
+      }
+      if(i%2===1) mel.push([T(i,3,2),midiToN(bass(prog,i,tonicMidi,-3)),"4n",1.0]);
+    }
+    return {melody:mel,mood:'aggro'};
+  },
+};
+
+const CALM  = ['rolling','wideSigh','pedalPing','harpBloom','counterpoint','rolled9',
+               'lull','moonpool','silt','hail'];
+const AGGRO = ['octane','surge','fallingChords','relentless','machine','doom',
+               'tremor','breaker','trough','fathom'];
+
+// name pool — sunken0x / ocean lexicon, 120 words
+const NAMES = ("SURFACE UNDERTOW SONAR GLASS SALT LULL HALFLIGHT MOONPOOL PRESSURE RIPTIDE COLLAPSE SIREN TREMOR BREAKER STATIC ABYSS "+
+"TROUGH SILT FATHOM DRIFT EBB KELP TRENCH BRINE SHOAL CURRENT DEPTH HAZE MURK SWELL WAKE FOAM TIDE REEF SLICK "+
+"HOLLOW HUSH GLIMMER SEDIMENT ANCHOR DREDGE SUBMERGE PLUNGE CASCADE VESSEL LANTERN DROWN SHIVER GLOOM "+
+"BALLAST BAROMETER BELOW BENEATH CAVERN CISTERN CRADLE DELUGE DERELICT ECHO FLICKER FRACTURE GHOST HARBOR "+
+"HORIZON KRAKEN LAGOON MARINER MAROON MONSOON NAUTILUS NOCTURNE OMEN PEARL QUAY RATION RUST SAILOR SCUTTLE "+
+"SEAFLOOR SEANCE SHALLOWS SHELF SHROUD SIGNAL SILENCE SINKER SLUMBER SPECTER SPINDRIFT SQUALL STARBOARD "+
+"STILLNESS STRATA SUBMARINE SUNKEN TEMPEST THRESHOLD TITANIC TOWLINE UNDERCURRENT VANTAGE VAULT VIGIL "+
+"WATERLINE WHARF WHIRLPOOL WINCH WRECK ZEPHYR ANTHRACITE COBALT DUSK FROST GRAVITY HOLLOWAY IRON LEVIATHAN "+
+"MIDNIGHT OBSIDIAN").trim().split(/\s+/);
+
+// First names. Every piece gets a full name: FIRSTS[seed%185] + " " + NAMES[seed%119].
+// 185 and 119 are COPRIME (185=5·37, 119=7·17) — that is load-bearing. A shared
+// factor would collapse the reachable pairs to a fraction of the grid, so do not
+// add or remove a word here without re-checking gcd against the surname count.
+// 185 × 119 = 22,015 full names. No word appears in both lists.
+const FIRSTS = ("COLD PALE DEEP BLACK SILENT DROWNED GREY BITTER LOST QUIET DARK SLOW HEAVY THIN SHARP "+
+"SOFT BLIND STILL WILD FADED BROKEN DISTANT ANCIENT FROZEN MOLTEN RUSTED GILDED SUNLESS STARLESS "+
+"MOONLIT RESTLESS WEIGHTLESS ENDLESS NAMELESS FATHOMLESS AMBER CRIMSON EMERALD INDIGO IVORY JADE "+
+"ONYX SABLE SCARLET SEPIA SILVER SLATE UMBER VIOLET ASHEN BRONZE COPPER NORTHERN SOUTHERN EASTERN "+
+"WESTERN OUTER INNER LOWER UPPER FIRST LAST FINAL EARLY LATE MORNING EVENING WINTER SUMMER AUTUMN "+
+"STONE BONE SHELL CORAL TIDAL SALTED BRINED WEATHERED WORN CRACKED SPLIT SEALED BURIED HUSHED "+
+"MUTED MUFFLED VEILED SHROUDED CLOAKED MASKED HIDDEN SECRET WHISPERED RISING FALLING TURNING "+
+"DRIFTING SINKING SWELLING BREAKING FADING GLOWING BURNING FREEZING VAST NARROW WIDE SHALLOW "+
+"STEEP SHEER JAGGED SMOOTH ROUGH LUNAR SOLAR STELLAR ASTRAL POLAR ARCTIC ABYSSAL BENTHIC PELAGIC "+
+"COASTAL FAINT DIM BRIGHT KEEN STARK GRIM SOLEMN SAVAGE GENTLE TENDER CRUEL PATIENT EAGER WEARY "+
+"SLEEPING WAKING DREAMING DROWNING WANDERING WAITING WATCHING LISTENING FORGOTTEN REMEMBERED "+
+"UNSEEN UNSPOKEN UNMARKED UNTOLD HOLLOWED SUNDERED SEVERED TETHERED ANCHORED MOORED "+
+"ADRIFT LOWERED SUBMERGED FLOODED SODDEN BRACKISH TIDELESS WINDLESS SOUNDLESS BOTTOMLESS "+
+"SHORELESS TRACKLESS RUINED WEATHERWORN SEAWORN SALTWORN STORMBORN NIGHTBORN TIDEBORN COLDBORN "+
+"IRONBOUND SEABOUND STORMBOUND ICEBOUND DUSKLIT STARLIT FOAMLIT EMBERLIT").trim().split(/\s+/);
+
+// every pattern in one list, calm first — the order the ← / → keys walk
+const ALL_ARCHES = [...CALM, ...AGGRO];
+
+// Audition override. null = the piece plays the pattern its own seed chose.
+// Set by ← / →; cleared the moment the hash changes, so a piece is never
+// misrepresented as sounding like something its seed did not pick.
+let archOverride = null;
+
+/* ---------- KNOBS ----------
+   Four dials the seed turns on top of whichever pattern it picked. The pattern
+   supplies the SHAPE; the knobs decide where it sits, how it breathes, how heavy
+   it is, and how it swings. 3 x 3 x 3 x 4 = 108 readings of every pattern, so 20
+   hand-written patterns behave like ~2,160. Every combination is still a real
+   piano part — no dial can produce a wrong note, only a different performance.
+   Uses PCI / midiToN / LO / HI, all declared above, never the helpers further
+   down the file (those are const and would be in the temporal dead zone here,
+   because buildMotifs(100) runs at load time). */
+const K_REGISTER = [0, -12, 12];             // which octave the phrase sits in
+const K_DYNAMICS = ["even", "swell", "ebb"]; // loudness shape across the 8 bars
+const K_WEIGHT   = ["light", "deep", "thin"];// bass doubling / note thinning
+const K_ARTIC    = ["natural", "short", "long"]; // staccato <-> legato
+const K_FEEL     = [0, 0.08, 0.16, 0.25];    // Tone.Transport.swing amount
+
+// Articulation is the one dial that ALWAYS bites. Register needs octave room and
+// thinning needs a dense pattern, so on sparse patterns (doom, pedalPing) those
+// two collapse to a single setting — measured, not assumed. Note length always
+// applies, which is what keeps even the sparsest pattern genuinely variable.
+const SHORTEN = {"1n":"2n","2n.":"2n","2n":"4n","4n.":"4n","4n":"8n","8n.":"8n","8n":"16n","16n":"16n"};
+const LENGTHEN= {"1n":"1n","2n.":"1n","2n":"2n.","4n.":"2n","4n":"2n","8n.":"4n","8n":"4n","16n":"8n"};
+
+const nToMidi = (n) => {
+  const m = String(n).match(/^([A-G]#?)(-?\d+)$/);
+  return m ? PCI[m[1]] + (parseInt(m[2], 10) + 1) * 12 : null;
+};
+
+function applyKnobs(melody, k) {
+  let mel = melody.map(e => [e[0], e[1], e[2], e[3]]);
+
+  // REGISTER — move the whole phrase an octave, but ONLY if it fits. clampMidi
+  // would fold out-of-range notes back and wreck the contour, so when there is
+  // no room the phrase just stays where the pattern put it.
+  if (k.reg !== 0) {
+    const ms = mel.map(e => nToMidi(e[1])).filter(x => x !== null);
+    if (ms.length && Math.min(...ms) + k.reg >= LO && Math.max(...ms) + k.reg <= HI)
+      mel = mel.map(e => [e[0], midiToN(nToMidi(e[1]) + k.reg), e[2], e[3]]);
+  }
+
+  // WEIGHT — "deep" doubles the lowest note of each bar an octave down.
+  // "thin" drops the quietest quarter, but only from patterns dense enough to
+  // survive it, and never more than half, so sparse patterns are never gutted.
+  if (k.wt === "deep") {
+    const lowest = {};
+    mel.forEach(e => {
+      const bar = String(e[0]).split(":")[0], m = nToMidi(e[1]);
+      if (m !== null && (lowest[bar] === undefined || m < lowest[bar].m)) lowest[bar] = { m, e };
+    });
+    Object.keys(lowest).forEach(bar => {
+      const { m, e } = lowest[bar];
+      if (m - 12 >= LO) mel.push([e[0], midiToN(m - 12), e[2], Math.min(1, e[3] * 0.85)]);
+    });
+  } else if (k.wt === "thin" && mel.length > 60) {
+    const vs = mel.map(e => e[3]).slice().sort((a, b) => a - b);
+    const cut = vs[Math.floor(vs.length * 0.25)];
+    const kept = mel.filter(e => e[3] > cut);
+    if (kept.length > mel.length * 0.5) mel = kept;
+  }
+
+  // ARTICULATION — staccato through legato. Always applies, on every pattern.
+  if (k.art === "short")     mel = mel.map(e => [e[0], e[1], SHORTEN[e[2]]  || e[2], e[3]]);
+  else if (k.art === "long") mel = mel.map(e => [e[0], e[1], LENGTHEN[e[2]] || e[2], e[3]]);
+
+  // DYNAMICS — steady, growing, or receding across the loop.
+  if (k.dyn !== "even") {
+    mel = mel.map(e => {
+      const bar = parseInt(String(e[0]).split(":")[0], 10) || 0;
+      const t = Math.min(1, bar / 7);
+      const f = k.dyn === "swell" ? 0.72 + 0.40 * t : 1.12 - 0.40 * t;
+      return [e[0], e[1], e[2], Math.max(0.05, Math.min(1, e[3] * f))];
+    });
+  }
+  return mel;
+}
+
+function composeMotif(seed, override){
+  const R = rngFrom(seed*2654435761 + 12345);
+  const isCalm = (seed % 2 === 0);            // alternate so list interleaves; chaos aligns per-variation
+  const archName = pick(R, isCalm?CALM:AGGRO);
+  const prog = pick(R, PROGS);
+  const tonicPc = pick(R, TONICS);
+  const tonicMidi = PCI[tonicPc] + 12*2;      // tonic at octave 2 baseline
+  // the three picks above always consume R in the same order, so an override
+  // swaps the pattern ONLY — key and progression stay as the seed wrote them
+  const knobs = { reg: pick(R,K_REGISTER), dyn: pick(R,K_DYNAMICS), wt: pick(R,K_WEIGHT),
+                  art: pick(R,K_ARTIC),    feel: pick(R,K_FEEL) };
+  const use = (override && ARCHETYPES[override]) ? override : archName;
+  const {melody,mood} = ARCHETYPES[use]({R,prog,tonicMidi});
+  // full name: first + surname. The surname is the original lexicon, so a grail
+  // keeps the identity it always had (FLICKER stays a FLICKER, now a particular one).
+  const name = FIRSTS[seed % FIRSTS.length] + " " + NAMES[seed % NAMES.length];
+  return { name, mood, loopBars:8, melody: applyKnobs(melody, knobs),
+           arch:use, key:tonicPc, knobs, swing:knobs.feel };
+}
+
+function buildMotifs(n){ const out=[]; for(let s=0;s<n;s++) out.push(composeMotif(s)); return out; }
+
+return {ARCHETYPES,ALL_ARCHES,PROGS,TONICS,PCI,rngFrom};
+})();
+  const B1    = (function(){
+// ALGO BATCH 1 — 15 new progression-driven patterns.
+// Same signature as the existing 20: (ctx) -> { melody, mood }
+// ctx = { R, prog, tonicMidi }.  Each builds its notes FROM the chord of the
+// bar, so a different progression genuinely rewrites the line.
+//
+// Organising idea for this batch: DENSITY THROUGH REPETITION. Every one of
+// these is busy, and each is busy in a structurally different way -- a
+// different repeating unit rather than a different melody.
+
+const LO = 36, HI = 96;
+// REGISTER LIFT — applies to the BASS ONLY. The floor is C2 because the
+// Kawai's bottom two samples (C1, G1) are the muddiest part of the
+// instrument. But the hand-written tunes live happily in C2-C3 and sound
+// good there, so chords are NOT lifted: doing that thinned the low-mid and
+// made the algo set half as full as the hand set.
+const REG = 12;
+
+const PCN = ['C','C#','D','D#','E','F','F#','G','G#','A','A#','B'];
+const midiToN = m => { m = Math.round(m); return PCN[((m%12)+12)%12] + (Math.floor(m/12)-1); };
+const clampMidi = m => { while (m < LO) m += 12; while (m > HI) m -= 12; return m; };
+const T = (b,q,s) => b + ":" + q + ":" + s;
+const QUAL = { min:[0,3,7], maj:[0,4,7], min7:[0,3,7,10], maj7:[0,4,7,11],
+               min9:[0,3,7,10,14], maj9:[0,4,7,11,14], add9:[0,4,7,14],
+               sus2:[0,2,7], sus4:[0,5,7], pow:[0,7,12], dim:[0,3,6] };
+// ROOT BAND — the tonic should change the KEY, not the REGISTER. Five of the
+// seven tonics sit above A, so without this a piece in G came out a fourth
+// higher than the same piece in A and lost its low-mid entirely. Folding the
+// root into a fixed band keeps every key in the same part of the keyboard.
+const ROOT_LO = 45, ROOT_HI = 56;
+const rootFold = m => { while (m > ROOT_HI) m -= 12; while (m < ROOT_LO) m += 12; return m; };
+const chordAt = (prog, i, tonic, oct) => {
+  const [semi, q] = prog[i % prog.length];
+  const root = rootFold(tonic + semi);
+  return (QUAL[q] || QUAL.min).map(iv => clampMidi(root + iv + oct*12));
+};
+const bassAt = (prog, i, tonic, oct) =>
+  clampMidi(rootFold(tonic + prog[i % prog.length][0]) + oct*12 + REG);
+
+return  {
+
+// 16ths that never stop, alternating hands. a wall.
+mill(ctx) { const {prog,tonicMidi} = ctx, mel = [];
+  for (let i = 0; i < 8; i++) {
+    const ch = chordAt(prog,i,tonicMidi,1), b = bassAt(prog,i,tonicMidi,-2);
+    for (let k = 0; k < 16; k++) {
+      const hand = k % 2;
+      const n = hand ? ch[(k>>1) % ch.length] + 12 : b + (k%4===0 ? 0 : 12);
+      mel.push([T(i,k>>2,k%4), midiToN(clampMidi(n)), "16n", k%4===0?0.85:0.55+(k%2)*0.08]);
+    }
+  }
+  return { melody: mel, mood: "aggro" }; },
+
+// a five-note cell against a four-beat bar. phase drift.
+phase(ctx) { const {prog,tonicMidi} = ctx, mel = [];
+  let step = 0;
+  for (let i = 0; i < 8; i++) {
+    const ch = chordAt(prog,i,tonicMidi,1);
+    const cell = [ch[0], ch[1], ch[2%ch.length], ch[1], ch[0]+12];
+    mel.push([T(i,0,0), midiToN(bassAt(prog,i,tonicMidi,-2)), "1n", 0.7]);
+    for (let k = 0; k < 16; k++, step++) {
+      mel.push([T(i,k>>2,k%4), midiToN(clampMidi(cell[step % 5])), "16n",
+                step % 5 === 0 ? 0.8 : 0.5]);
+    }
+  }
+  return { melody: mel, mood: "aggro" }; },
+
+// tremolo between the outer two chord tones, widening each bar.
+shiver(ctx) { const {prog,tonicMidi} = ctx, mel = [];
+  for (let i = 0; i < 8; i++) {
+    const ch = chordAt(prog,i,tonicMidi,1);
+    const lo = ch[0], hi = ch[ch.length-1] + (i>3 ? 12 : 0);
+    mel.push([T(i,0,0), midiToN(bassAt(prog,i,tonicMidi,-2)), "2n", 0.75]);
+    mel.push([T(i,2,0), midiToN(bassAt(prog,i,tonicMidi,-2)), "2n", 0.65]);
+    for (let k = 0; k < 16; k++)
+      mel.push([T(i,k>>2,k%4), midiToN(clampMidi(k%2 ? hi : lo)), "16n",
+                0.45 + i*0.05 + (k%4===0 ? 0.15 : 0)]);
+  }
+  return { melody: mel, mood: "aggro" }; },
+
+// every chord tone struck at once, sixteen times a bar. a hammer.
+slab(ctx) { const {prog,tonicMidi} = ctx, mel = [];
+  for (let i = 0; i < 8; i++) {
+    const ch = chordAt(prog,i,tonicMidi,0), b = bassAt(prog,i,tonicMidi,-2);
+    for (let k = 0; k < 8; k++) {
+      const v = k%4===0 ? 0.95 : 0.6;
+      mel.push([T(i,k>>1,(k%2)*2), midiToN(b), "8n", v]);
+      if (k % 2 === 0) ch.forEach(n => mel.push([T(i,k>>1,(k%2)*2), midiToN(clampMidi(n+12)), "8n", v*0.8]));
+    }
+  }
+  return { melody: mel, mood: "aggro" }; },
+
+// a line that accelerates: quarters, then eighths, then sixteenths.
+accelerate(ctx) { const {prog,tonicMidi} = ctx, mel = [];
+  for (let i = 0; i < 8; i++) {
+    const ch = chordAt(prog,i,tonicMidi,1);
+    mel.push([T(i,0,0), midiToN(bassAt(prog,i,tonicMidi,-2)), "1n", 0.8]);
+    const div = i < 2 ? 4 : (i < 5 ? 8 : 16);
+    for (let k = 0; k < div; k++) {
+      const q = Math.floor(k * 4 / div), s = Math.floor((k * 16 / div) % 4);
+      mel.push([T(i,q,s), midiToN(clampMidi(ch[k % ch.length] + (k > div/2 ? 12 : 0))),
+                div === 4 ? "4n" : div === 8 ? "8n" : "16n",
+                0.5 + (k/div)*0.4]);
+    }
+  }
+  return { melody: mel, mood: "aggro" }; },
+
+// two voices a bar apart, chasing. the same line, delayed.
+canon(ctx) { const {prog,tonicMidi} = ctx, mel = [];
+  const line = i => { const ch = chordAt(prog,i,tonicMidi,1);
+    return [ch[0], ch[2%ch.length], ch[1], ch[0]+12, ch[2%ch.length], ch[1], ch[0], ch[1]]; };
+  for (let i = 0; i < 8; i++) {
+    mel.push([T(i,0,0), midiToN(bassAt(prog,i,tonicMidi,-2)), "1n", 0.7]);
+    const lead = line(i), follow = line((i+7)%8);
+    for (let k = 0; k < 8; k++) {
+      mel.push([T(i,k>>1,(k%2)*2), midiToN(clampMidi(lead[k]+12)), "8n", 0.6]);
+      mel.push([T(i,k>>1,(k%2)*2+1), midiToN(clampMidi(follow[k]-12)), "16n", 0.4]);
+    }
+  }
+  return { melody: mel, mood: "aggro" }; },
+
+// a held drone with fast decoration flickering over it.
+drone(ctx) { const {prog,tonicMidi} = ctx, mel = [];
+  const pedal = clampMidi(tonicMidi + 24);
+  for (let i = 0; i < 8; i++) {
+    const ch = chordAt(prog,i,tonicMidi,1);
+    mel.push([T(i,0,0), midiToN(bassAt(prog,i,tonicMidi,-2)), "1n", 0.6]);
+    mel.push([T(i,0,0), midiToN(pedal), "1n", 0.5]);
+    for (let k = 0; k < 12; k++) {
+      const q = Math.floor(k/3), s = (k%3) + 1;
+      mel.push([T(i,q,s%4), midiToN(clampMidi(ch[k % ch.length] + 24)), "16n", 0.35 + (k%3===0?0.2:0)]);
+    }
+  }
+  return { melody: mel, mood: "calm" }; },
+
+// dense but quiet. a shimmer high up, nothing below.
+shimmer(ctx) { const {prog,tonicMidi} = ctx, mel = [];
+  for (let i = 0; i < 8; i++) {
+    const ch = chordAt(prog,i,tonicMidi,2);
+    for (let k = 0; k < 16; k++)
+      mel.push([T(i,k>>2,k%4), midiToN(clampMidi(ch[(k*3) % ch.length] + 12)), "16n",
+                0.22 + (k%4===0 ? 0.12 : 0)]);
+    if (i % 2 === 0) mel.push([T(i,0,0), midiToN(bassAt(prog,i,tonicMidi,-1)), "1n", 0.32]);
+  }
+  return { melody: mel, mood: "calm" }; },
+
+// rolled chords, one after another, overlapping.
+cascade(ctx) { const {prog,tonicMidi} = ctx, mel = [];
+  for (let i = 0; i < 8; i++) {
+    const ch = chordAt(prog,i,tonicMidi,1);
+    mel.push([T(i,0,0), midiToN(bassAt(prog,i,tonicMidi,-2)), "1n", 0.65]);
+    for (let roll = 0; roll < 4; roll++) {
+      const up = roll % 2 === 0;
+      for (let k = 0; k < 4; k++) {
+        const idx = up ? k : (3 - k);
+        const n = ch[idx % ch.length] + (roll >= 2 ? 12 : 0);
+        mel.push([T(i,roll,k), midiToN(clampMidi(n)), "16n", 0.4 + (k===0?0.25:0)]);
+      }
+    }
+  }
+  return { melody: mel, mood: "calm" }; },
+
+// staircase: each bar climbs one more step than the last.
+staircase(ctx) { const {prog,tonicMidi} = ctx, mel = [];
+  for (let i = 0; i < 8; i++) {
+    const ch = chordAt(prog,i,tonicMidi,0);
+    mel.push([T(i,0,0), midiToN(bassAt(prog,i,tonicMidi,-2)), "1n", 0.75]);
+    const steps = 4 + i * 2;
+    for (let k = 0; k < steps; k++) {
+      const q = Math.floor(k * 4 / steps), s = Math.floor((k * 16 / steps) % 4);
+      mel.push([T(i,q,s), midiToN(clampMidi(ch[k % ch.length] + 12 * Math.floor(k / ch.length))),
+                steps > 8 ? "16n" : "8n", 0.45 + (k/steps)*0.35]);
+    }
+  }
+  return { melody: mel, mood: "aggro" }; },
+
+// call and answer at speed. low burst, high burst, no gap.
+volley(ctx) { const {prog,tonicMidi} = ctx, mel = [];
+  for (let i = 0; i < 8; i++) {
+    const ch = chordAt(prog,i,tonicMidi,0), b = bassAt(prog,i,tonicMidi,-2);
+    for (let k = 0; k < 4; k++)
+      mel.push([T(i,0,k), midiToN(clampMidi(k === 0 ? b : ch[k % ch.length])), "16n", 0.85]);
+    for (let k = 0; k < 4; k++)
+      mel.push([T(i,1,k), midiToN(clampMidi(ch[(3-k) % ch.length] + 24)), "16n", 0.7]);
+    for (let k = 0; k < 4; k++)
+      mel.push([T(i,2,k), midiToN(clampMidi(k === 0 ? b : ch[k % ch.length] + 12)), "16n", 0.8]);
+    for (let k = 0; k < 4; k++)
+      mel.push([T(i,3,k), midiToN(clampMidi(ch[k % ch.length] + 24)), "16n", 0.65]);
+  }
+  return { melody: mel, mood: "aggro" }; },
+
+// the same four notes every bar, but the chord under them keeps changing.
+fixedpoint(ctx) { const {prog,tonicMidi} = ctx, mel = [];
+  const anchor = [0, 7, 12, 7].map(iv => clampMidi(tonicMidi + iv + 24));
+  for (let i = 0; i < 8; i++) {
+    const ch = chordAt(prog,i,tonicMidi,0);
+    mel.push([T(i,0,0), midiToN(bassAt(prog,i,tonicMidi,-2)), "1n", 0.7]);
+    ch.forEach(n => mel.push([T(i,0,0), midiToN(clampMidi(n)), "2n", 0.45]));
+    for (let k = 0; k < 8; k++)
+      mel.push([T(i,k>>1,(k%2)*2), midiToN(anchor[k % 4]), "8n", 0.5 + (k%4===0?0.2:0)]);
+  }
+  return { melody: mel, mood: "aggro" }; },
+
+// bass and treble converging toward the middle across the loop.
+converge(ctx) { const {prog,tonicMidi} = ctx, mel = [];
+  for (let i = 0; i < 8; i++) {
+    const ch = chordAt(prog,i,tonicMidi,0);
+    const spread = 3 - Math.floor(i / 3);
+    for (let k = 0; k < 8; k++) {
+      const lo = ch[k % ch.length] - 12 * spread;
+      const hi = ch[(ch.length-1 - k % ch.length)] + 12 * spread;
+      mel.push([T(i,k>>1,(k%2)*2), midiToN(clampMidi(lo)), "8n", 0.6]);
+      mel.push([T(i,k>>1,(k%2)*2), midiToN(clampMidi(hi)), "8n", 0.5]);
+    }
+  }
+  return { melody: mel, mood: "aggro" }; },
+
+// a rhythm that stutters: doubles, triples, then breaks.
+stutter(ctx) { const {prog,tonicMidi} = ctx, mel = [];
+  for (let i = 0; i < 8; i++) {
+    const ch = chordAt(prog,i,tonicMidi,1), b = bassAt(prog,i,tonicMidi,-2);
+    mel.push([T(i,0,0), midiToN(b), "2n", 0.85]);
+    const groups = [[0,2],[1,3],[2,2],[3,4]];
+    for (const [q, n] of groups)
+      for (let k = 0; k < n && k < 4; k++)
+        mel.push([T(i,q,k), midiToN(clampMidi(ch[(q+k) % ch.length] + 12)), "16n",
+                  k === 0 ? 0.8 : 0.5]);
+  }
+  return { melody: mel, mood: "aggro" }; },
+
+// quiet, fast, and entirely in one hand. a nervous flutter.
+flutter(ctx) { const {prog,tonicMidi} = ctx, mel = [];
+  for (let i = 0; i < 8; i++) {
+    const ch = chordAt(prog,i,tonicMidi,1);
+    if (i % 4 === 0) mel.push([T(i,0,0), midiToN(bassAt(prog,i,tonicMidi,-1)), "1n", 0.35]);
+    for (let k = 0; k < 16; k++) {
+      const idx = (k % 2) ? (k>>1) % ch.length : ((k>>1)+1) % ch.length;
+      mel.push([T(i,k>>2,k%4), midiToN(clampMidi(ch[idx] + 12)), "16n",
+                0.25 + (k%4===0 ? 0.12 : 0) + (i%2 ? 0.05 : 0)]);
+    }
+  }
+  return { melody: mel, mood: "calm" }; },
+
+};
+
+})();
+  const B2    = (function(){
+// ALGO BATCH 2 — 18 patterns. Axis: REGISTER AND SPACE.
+// Signature: (ctx) -> { melody, mood },  ctx = { R, prog, tonicMidi }
+//
+// REWRITTEN. The first version computed every note from the loop counter and
+// played eight identical bars. That is what made it sound like a texture rather
+// than a piece. Two things were missing, and neither can be added afterwards --
+// they have to be what the pattern is built from:
+//
+//   1. A CELL. A short figure written out by hand, chosen rather than derived,
+//      repeated so the ear catches it. MOONPOOL's [top, third, root, third] is
+//      the model: four notes someone decided on.
+//   2. A PHRASE. Something that happens on some bars and not others, so the
+//      eight bars form a shape instead of one bar copied eight times. Usually
+//      keyed on i%4 so it lands as a four-bar arrival.
+//
+// The register idea of each pattern -- where the hands sit and how far apart --
+// is unchanged. That is what still separates them from one another.
+
+const LO = 36, HI = 96;
+// REGISTER LIFT — applies to the BASS ONLY. The floor is C2 because the
+// Kawai's bottom two samples (C1, G1) are the muddiest part of the instrument.
+// The hand-written tunes live happily in C2-C3 and sound good there, so chords
+// are NOT lifted: doing that thinned the low-mid and made this set half as full
+// as the hand set.
+const REG = 12;
+
+const PCN = ['C','C#','D','D#','E','F','F#','G','G#','A','A#','B'];
+const midiToN = m => { m = Math.round(m); return PCN[((m%12)+12)%12] + (Math.floor(m/12)-1); };
+const clampMidi = m => { while (m < LO) m += 12; while (m > HI) m -= 12; return m; };
+const T = (b,q,s) => b + ":" + q + ":" + s;
+const QUAL = { min:[0,3,7], maj:[0,4,7], min7:[0,3,7,10], maj7:[0,4,7,11],
+               min9:[0,3,7,10,14], maj9:[0,4,7,11,14], add9:[0,4,7,14],
+               sus2:[0,2,7], sus4:[0,5,7], pow:[0,7,12], dim:[0,3,6] };
+
+// ROOT BAND — the tonic should change the KEY, not the REGISTER. Five of the
+// seven tonics sit above A, so without this a piece in G came out a fourth
+// higher than the same piece in A and lost its low-mid entirely.
+const ROOT_LO = 45, ROOT_HI = 56;
+const rootFold = m => { while (m > ROOT_HI) m -= 12; while (m < ROOT_LO) m += 12; return m; };
+
+const chordAt = (prog, i, tonic, oct) => {
+  const [semi, q] = prog[i % prog.length];
+  const root = rootFold(tonic + semi);
+  return (QUAL[q] || QUAL.min).map(iv => clampMidi(root + iv + oct*12));
+};
+const bassAt = (prog, i, tonic, oct) =>
+  clampMidi(rootFold(tonic + prog[i % prog.length][0]) + oct*12 + REG);
+
+// pick chord tones BY NAME: c(ch,0) is the root, c(ch,-1) the top of the voicing.
+const c  = (ch, n) => ch[((n % ch.length) + ch.length) % ch.length];
+const at = (ch, n, oct) => clampMidi(c(ch, n) + (oct || 0) * 12);
+
+const PATTERNS = {
+
+// hands two octaves apart, nothing in the middle. a hollow shell.
+// CELL: top, root, third, root — a bell figure, high and slow.
+// PHRASE: every fourth bar one note steps into the empty middle.
+chasm(ctx) { const {prog,tonicMidi} = ctx, mel = [];
+  for (let i = 0; i < 8; i++) {
+    const ch = chordAt(prog,i,tonicMidi,2);
+    const cell = [at(ch,-1,1), at(ch,0,1), at(ch,1,1), at(ch,0,1)];
+    mel.push([T(i,0,0), midiToN(bassAt(prog,i,tonicMidi,-2)), "1n", 0.62]);
+    for (let k = 0; k < 8; k++)
+      mel.push([T(i,k>>1,(k%2)*2), midiToN(cell[k % 4]), "8n", k%4===0 ? 0.42 : 0.28]);
+    if (i % 4 === 3) mel.push([T(i,2,0), midiToN(at(ch,0,-1)), "2n", 0.46]);
+  }
+  return { melody: mel, mood: "calm" }; },
+
+// every voice inside one fifth. crushed, all colour lost to proximity.
+// CELL: an eight-step wriggle that never leaves the fifth.
+// PHRASE: every fourth bar the whole knot jumps an octave and comes straight back.
+knot(ctx) { const {prog,tonicMidi} = ctx, mel = [];
+  for (let i = 0; i < 8; i++) {
+    const base = clampMidi(rootFold(tonicMidi + prog[i % prog.length][0]));
+    const lift = (i % 4 === 3) ? 12 : 0;
+    const cell = [0,2,3,2,5,3,2,0].map(iv => clampMidi(base + iv + lift));
+    for (let k = 0; k < 16; k++)
+      mel.push([T(i,k>>2,k%4), midiToN(cell[k % 8]), "16n", k%4===0 ? 0.78 : 0.46]);
+  }
+  return { melody: mel, mood: "aggro" }; },
+
+// the gap opens a little every bar until the hands are three octaves apart.
+// CELL: a two-note pry, low then high, the same shape at every width.
+// PHRASE: at the halfway point the prying stops and one note is held alone.
+prise(ctx) { const {prog,tonicMidi} = ctx, mel = [];
+  for (let i = 0; i < 8; i++) {
+    const ch = chordAt(prog,i,tonicMidi,0), sp = i * 4;
+    if (i === 4) { mel.push([T(i,0,0), midiToN(at(ch,0)), "1n", 0.6]); continue; }
+    for (let k = 0; k < 4; k++) {
+      mel.push([T(i,k,0), midiToN(clampMidi(c(ch,0) - sp)), "8n", 0.62]);
+      mel.push([T(i,k,2), midiToN(clampMidi(c(ch,k+1) + sp)), "8n", 0.40]);
+    }
+    if (i % 4 === 3) mel.push([T(i,3,2), midiToN(clampMidi(c(ch,-1) + sp)), "4n", 0.70]);
+  }
+  return { melody: mel, mood: "calm" }; },
+
+// starts three octaves wide, closes to a unison by the last bar.
+// CELL: root, third, root, fifth — held in both hands as they converge.
+// PHRASE: the last bars land as a single pitch, which is the point of the piece.
+clench(ctx) { const {prog,tonicMidi} = ctx, mel = [];
+  for (let i = 0; i < 8; i++) {
+    const ch = chordAt(prog,i,tonicMidi,0);
+    const gap = Math.max(0, 28 - i*4), cell = [0,1,0,2];
+    for (let k = 0; k < 8; k++) {
+      const t = T(i,k>>1,(k%2)*2), n = c(ch, cell[k % 4]);
+      mel.push([t, midiToN(clampMidi(n - gap/2)), "8n", k%4===0 ? 0.72 : 0.48]);
+      if (gap > 0) mel.push([t, midiToN(clampMidi(n + gap/2)), "8n", 0.42]);
+    }
+    if (i % 4 === 3) mel.push([T(i,0,0), midiToN(bassAt(prog,i,tonicMidi,-2)), "1n", 0.70]);
+  }
+  return { melody: mel, mood: "aggro" }; },
+
+// only the top two octaves are ever used. thin, glassy, no floor.
+// CELL: a music box — top, third, root, third, the MOONPOOL shape up high.
+// PHRASE: once every four bars a single low note appears, a glimpse of a floor.
+ceiling(ctx) { const {prog,tonicMidi} = ctx, mel = [];
+  for (let i = 0; i < 8; i++) {
+    const ch = chordAt(prog,i,tonicMidi,2);
+    const cell = [at(ch,-1,1), at(ch,1,1), at(ch,0,1), at(ch,1,1)];
+    for (let k = 0; k < 12; k++)
+      mel.push([T(i,(k/3)|0,(k%3)+1), midiToN(cell[k % 4]), "16n", k%4===0 ? 0.44 : 0.24]);
+    if (i % 4 === 1) mel.push([T(i,0,0), midiToN(at(ch,0,-2)), "2n", 0.34]);
+  }
+  return { melody: mel, mood: "calm" }; },
+
+// only the bottom two octaves. all weight, no air.
+// CELL: a low rocking figure, root out to fifth and back.
+// PHRASE: every fourth bar one note is thrown two octaves up and left ringing.
+cellar(ctx) { const {prog,tonicMidi} = ctx, mel = [];
+  for (let i = 0; i < 8; i++) {
+    const ch = chordAt(prog,i,tonicMidi,-1), b = bassAt(prog,i,tonicMidi,-2);
+    const cell = [c(ch,0), c(ch,2), c(ch,1), c(ch,2)];
+    mel.push([T(i,0,0), midiToN(b), "2n", 0.88]);
+    for (let k = 0; k < 6; k++)
+      mel.push([T(i,(k/2)|0,(k%2)*2), midiToN(clampMidi(cell[k % 4])), "8n",
+                k%2===0 ? 0.66 : 0.50]);
+    if (i % 4 === 3) mel.push([T(i,3,0), midiToN(at(ch,-1,2)), "2n", 0.50]);
+  }
+  return { melody: mel, mood: "aggro" }; },
+
+// the whole texture climbs one octave across the eight bars and never returns.
+// CELL: a rising four-note run, restated a little higher each bar.
+// PHRASE: every second bar the top of the run is held instead of passed through.
+ascent(ctx) { const {prog,tonicMidi} = ctx, mel = [];
+  for (let i = 0; i < 8; i++) {
+    const lift = ((i*12)/7)|0;
+    const ch = chordAt(prog,i,tonicMidi,0).map(n => clampMidi(n + lift));
+    const cell = [c(ch,0), c(ch,1), c(ch,2), c(ch,-1)];
+    mel.push([T(i,0,0), midiToN(clampMidi(bassAt(prog,i,tonicMidi,-2) + lift)), "1n", 0.62]);
+    for (let k = 0; k < 8; k++)
+      mel.push([T(i,k>>1,(k%2)*2), midiToN(cell[k % 4]), "8n", 0.32 + i*0.03]);
+    if (i % 2 === 1) mel.push([T(i,3,0), midiToN(clampMidi(c(ch,-1) + 12)), "2n", 0.50]);
+  }
+  return { melody: mel, mood: "calm" }; },
+
+// the whole texture sinks an octave. the floor drops out slowly.
+// CELL: a falling figure, top down to root.
+// PHRASE: the bass abandons the last two bars, so the sinking has nothing under it.
+subside(ctx) { const {prog,tonicMidi} = ctx, mel = [];
+  for (let i = 0; i < 8; i++) {
+    const drop = ((i*12)/7)|0;
+    const ch = chordAt(prog,i,tonicMidi,1).map(n => clampMidi(n - drop));
+    const cell = [c(ch,-1), c(ch,2), c(ch,1), c(ch,0)];
+    if (i < 6) mel.push([T(i,0,0), midiToN(clampMidi(bassAt(prog,i,tonicMidi,-1) - drop)), "1n", 0.66]);
+    for (let k = 0; k < 6; k++)
+      mel.push([T(i,(k/2)|0,(k%2)*2), midiToN(cell[k % 4]), "4n", 0.52 - i*0.02]);
+  }
+  return { melody: mel, mood: "calm" }; },
+
+// two fixed registers, alternating every bar. nothing in between, ever.
+// CELL: each register has its own figure, so the swap is a change of voice.
+// PHRASE: every fourth bar both registers sound at once and the illusion breaks.
+shelf(ctx) { const {prog,tonicMidi} = ctx, mel = [];
+  for (let i = 0; i < 8; i++) {
+    const hi = i % 2 === 0;
+    const ch = chordAt(prog,i,tonicMidi, hi ? 2 : -1);
+    const cell = hi ? [c(ch,-1), c(ch,1), c(ch,0), c(ch,1)]
+                    : [c(ch,0), c(ch,0), c(ch,2), c(ch,1)];
+    for (let k = 0; k < 8; k++)
+      mel.push([T(i,k>>1,(k%2)*2), midiToN(cell[k % 4]), "8n",
+                (hi ? 0.34 : 0.70) + (k%4===0 ? 0.12 : 0)]);
+    if (i % 4 === 3) {
+      const other = chordAt(prog,i,tonicMidi, hi ? -1 : 2);
+      for (let k = 0; k < 2; k++)
+        mel.push([T(i,k*2,0), midiToN(c(other,k)), "2n", 0.50]);
+    }
+  }
+  return { melody: mel, mood: "aggro" }; },
+
+// a single held pitch at the top while everything below it moves.
+// CELL: the moving lower figure — root, third, root, fifth.
+// PHRASE: the pin drops out for one bar in four, and its absence is the event.
+nail(ctx) { const {prog,tonicMidi} = ctx, mel = [];
+  const pin = clampMidi(rootFold(tonicMidi) + 36);
+  for (let i = 0; i < 8; i++) {
+    const ch = chordAt(prog,i,tonicMidi,0);
+    const cell = [c(ch,0), c(ch,1), c(ch,0), c(ch,2)];
+    if (i % 4 !== 2) mel.push([T(i,0,0), midiToN(pin), "1n", 0.30]);
+    mel.push([T(i,0,0), midiToN(bassAt(prog,i,tonicMidi,-2)), "2n", 0.74]);
+    for (let k = 0; k < 6; k++)
+      mel.push([T(i,(k/2)|0,(k%2)*2), midiToN(cell[k % 4]), "8n", k%2===0 ? 0.52 : 0.38]);
+  }
+  return { melody: mel, mood: "calm" }; },
+
+// a single held pitch at the bottom while everything above it moves.
+// CELL: an upper figure that keeps returning to the third.
+// PHRASE: every fourth bar the anchor is struck harder and again mid-bar.
+anchor(ctx) { const {prog,tonicMidi} = ctx, mel = [];
+  const pin = clampMidi(rootFold(tonicMidi) - 12);
+  for (let i = 0; i < 8; i++) {
+    const ch = chordAt(prog,i,tonicMidi,1);
+    const cell = [c(ch,1), c(ch,0), c(ch,1), c(ch,-1)];
+    mel.push([T(i,0,0), midiToN(pin), "1n", i%4===3 ? 0.90 : 0.72]);
+    if (i % 4 === 3) mel.push([T(i,2,0), midiToN(pin), "2n", 0.80]);
+    for (let k = 0; k < 10; k++)
+      mel.push([T(i,(k*2/5)|0,(k%2)*2), midiToN(cell[k % 4]), "8n", k%4===0 ? 0.50 : 0.34]);
+  }
+  return { melody: mel, mood: "calm" }; },
+
+// the same figure stated in four registers at once. one chord, four sizes.
+// CELL: root, fifth, third, top — the shape every register plays together.
+// PHRASE: every fourth bar drops to two registers, so the stack can be heard thinning.
+stack(ctx) { const {prog,tonicMidi} = ctx, mel = [];
+  for (let i = 0; i < 8; i++) {
+    const ch = chordAt(prog,i,tonicMidi,0);
+    const cell = [0,2,1,-1];
+    const octs = (i % 4 === 3) ? [-1,0] : [-2,-1,0,1];
+    for (let k = 0; k < 4; k++) {
+      const t = T(i,k,0);
+      for (const o of octs)
+        mel.push([t, midiToN(at(ch, cell[k], o)), "4n",
+                  (k===0 ? 0.62 : 0.46) - Math.abs(o)*0.06]);
+    }
+  }
+  return { melody: mel, mood: "aggro" }; },
+
+// register chosen fresh each bar by the seed. lurches, no trajectory.
+// CELL: one fixed figure throughout, so the ONLY thing changing is where it sits.
+// PHRASE: the last bar returns to the register the first one used.
+lurch(ctx) { const {R,prog,tonicMidi} = ctx, mel = [];
+  let firstOct = null;
+  for (let i = 0; i < 8; i++) {
+    let oct = Math.floor(R() * 5) - 2;
+    if (i === 0) firstOct = oct;
+    if (i === 7) oct = firstOct;
+    const ch = chordAt(prog,i,tonicMidi,oct);
+    const cell = [c(ch,0), c(ch,2), c(ch,1), c(ch,2)];
+    mel.push([T(i,0,0), midiToN(bassAt(prog,i,tonicMidi,-2)), "2n", 0.70]);
+    for (let k = 0; k < 8; k++)
+      mel.push([T(i,k>>1,(k%2)*2), midiToN(cell[k % 4]), "8n", k%4===0 ? 0.62 : 0.40]);
+  }
+  return { melody: mel, mood: "aggro" }; },
+
+// the gap breathes: wide, closed, wide, closed, twice over.
+// CELL: a paired figure, both hands playing the same shape at opposite ends.
+// PHRASE: at each fully open point a long note is held across the gap.
+bellows(ctx) { const {prog,tonicMidi} = ctx, mel = [];
+  for (let i = 0; i < 8; i++) {
+    const ch = chordAt(prog,i,tonicMidi,0);
+    const gap = Math.round(14 + 14 * Math.sin(i * Math.PI / 2));
+    const cell = [0,1,2,1];
+    for (let k = 0; k < 8; k++) {
+      const t = T(i,k>>1,(k%2)*2), n = c(ch, cell[k % 4]);
+      mel.push([t, midiToN(clampMidi(n - gap)), "8n", k%4===0 ? 0.70 : 0.50]);
+      mel.push([t, midiToN(clampMidi(n + gap)), "8n", 0.34]);
+    }
+    if (i % 4 === 1) mel.push([T(i,0,0), midiToN(clampMidi(c(ch,0) + gap)), "1n", 0.44]);
+  }
+  return { melody: mel, mood: "calm" }; },
+
+// each bar occupies a narrower slice than the last. the room shrinks.
+// CELL: a descending sweep across whatever the span currently is.
+// PHRASE: at the narrowest point the figure gives up and repeats one pitch.
+funnel(ctx) { const {prog,tonicMidi} = ctx, mel = [];
+  for (let i = 0; i < 8; i++) {
+    const span = 36 - i*4;
+    const base = clampMidi(rootFold(tonicMidi + prog[i % prog.length][0]));
+    for (let k = 0; k < 12; k++) {
+      const n = (i >= 6) ? base : base + Math.round((1 - k/11) * span) - (span >> 1);
+      mel.push([T(i,(k/3)|0,(k%3)+1), midiToN(clampMidi(n)), "16n",
+                k%3===0 ? 0.66 : 0.40 + i*0.03]);
+    }
+    if (i % 4 === 3) mel.push([T(i,0,0), midiToN(bassAt(prog,i,tonicMidi,-2)), "2n", 0.72]);
+  }
+  return { melody: mel, mood: "aggro" }; },
+
+// bass and top move in opposite directions through the whole piece.
+// CELL: a two-note figure in each hand, the same shape mirrored.
+// PHRASE: at the crossing point, halfway, both hands strike together.
+scissor(ctx) { const {prog,tonicMidi} = ctx, mel = [];
+  for (let i = 0; i < 8; i++) {
+    const ch = chordAt(prog,i,tonicMidi,0);
+    const lo = clampMidi(c(ch,0) - 12 - i*2), hi = clampMidi(c(ch,-1) + 12 + i*2);
+    mel.push([T(i,0,0), midiToN(lo), "2n", 0.76]);
+    mel.push([T(i,1,2), midiToN(clampMidi(lo + 7)), "4n", 0.56]);
+    mel.push([T(i,2,0), midiToN(hi), "2n", 0.50]);
+    mel.push([T(i,3,2), midiToN(clampMidi(hi - 5)), "4n", 0.38]);
+    if (i === 4) { mel.push([T(i,0,0), midiToN(hi), "2n", 0.60]);
+                   mel.push([T(i,2,0), midiToN(lo), "2n", 0.60]); }
+  }
+  return { melody: mel, mood: "calm" }; },
+
+// one octave only, but which octave rotates every two bars. a moving window.
+// CELL: one fixed figure, so the window move is the only event.
+// PHRASE: each time the window shifts, the first note of that bar is accented hard.
+window(ctx) { const {prog,tonicMidi} = ctx, mel = [];
+  for (let i = 0; i < 8; i++) {
+    const oct = ((i>>1) % 4) - 1;
+    const ch = chordAt(prog,i,tonicMidi,oct);
+    const cell = [c(ch,0), c(ch,1), c(ch,-1), c(ch,1)];
+    const moved = i % 2 === 0;
+    for (let k = 0; k < 10; k++)
+      mel.push([T(i,(k*2/5)|0,(k%2)*2), midiToN(cell[k % 4]), "8n",
+                (k===0 && moved) ? 0.88 : (k%4===0 ? 0.50 : 0.36)]);
+  }
+  return { melody: mel, mood: "aggro" }; },
+
+// every note doubled at the octave, so no single pitch sounds anywhere.
+// CELL: root, third, top, third — stated as a pair every time.
+// PHRASE: for one bar in four the doubling stops and a single line is exposed.
+twin(ctx) { const {prog,tonicMidi} = ctx, mel = [];
+  for (let i = 0; i < 8; i++) {
+    const ch = chordAt(prog,i,tonicMidi,0);
+    const cell = [c(ch,0), c(ch,1), c(ch,-1), c(ch,1)];
+    const solo = i % 4 === 2;
+    mel.push([T(i,0,0), midiToN(bassAt(prog,i,tonicMidi,-2)), "1n", 0.66]);
+    for (let k = 0; k < 8; k++) {
+      const t = T(i,k>>1,(k%2)*2), n = cell[k % 4];
+      mel.push([t, midiToN(clampMidi(n)), "8n", k%4===0 ? 0.62 : 0.46]);
+      if (!solo) mel.push([t, midiToN(clampMidi(n + 12)), "8n", 0.32]);
+    }
+  }
+  return { melody: mel, mood: "calm" }; },
+
+};
+
+// ── PHRASING ────────────────────────────────────────────────────────────────
+// A dynamic shape over the top: downbeat accent, strong/weak inside the beat,
+// and an arc across the eight bars. Quantised to discrete steps on purpose --
+// a continuous curve gives almost every note its own velocity, which measures
+// as "varied" but plays as unsteady. Real players choose a handful of levels.
+//
+// The bar-thinning pass that used to live here is GONE. It was a crude stand-in
+// for phrase structure, and now that every pattern above has real bar-level
+// events written into it, thinning only damaged the figures.
+const _STEP = 0.085;
+const _clampV = v => {
+  const q = Math.round(Math.max(0.10, Math.min(1, v)) / _STEP) * _STEP;
+  return Math.max(0.10, Math.min(1, +q.toFixed(3)));
+};
+function shapeVel(mel) {
+  return mel.map(ev => {
+    const [t, n, d, v] = ev;
+    const p = t.split(":").map(Number), bar = p[0], q = p[1] || 0, s = p[2] || 0;
+    const arc  = 0.84 + 0.30 * Math.sin(Math.PI * bar / 7);
+    const down = (q === 0 && s === 0) ? 1.16 : (s === 0 ? 1.04 : 0.90);
+    const push = 1 - (q % 2) * 0.05;
+    return [t, n, d, _clampV(v * arc * down * push)];
+  });
+}
+return  Object.fromEntries(Object.entries(PATTERNS).map(([k, fn]) =>
+  [k, ctx => { const out = fn(ctx); return { ...out, melody: shapeVel(out.melody) }; }]));
+
+})();
+  const B3    = (function(){
+// ALGO BATCH 3 — 18 patterns. Axis: TIME AND ATTACK.
+// Signature: (ctx) -> { melody, mood },  ctx = { R, prog, tonicMidi }
+//
+// REWRITTEN, same reason as batch 2: every note came from arithmetic on the
+// loop counter and all eight bars were identical. Each pattern now has
+//   1. a CELL — a figure chosen by hand and repeated so the ear catches it
+//   2. a PHRASE — an event on some bars and not others, so eight bars make a shape
+//
+// For this batch the phrase events are deliberately about TIME, since that is
+// what the batch is about. The rule gets broken once every four bars: the
+// off-beat pattern lands on a beat, the rigid one skips a tooth, the drunk one
+// snaps to the grid. Stating a rule and then breaking it is what makes a
+// listener hear the rule at all.
+
+const LO = 36, HI = 96;
+const REG = 12;                    // bass only — see the note in batch 2
+
+const PCN = ['C','C#','D','D#','E','F','F#','G','G#','A','A#','B'];
+const midiToN = m => { m = Math.round(m); return PCN[((m%12)+12)%12] + (Math.floor(m/12)-1); };
+const clampMidi = m => { while (m < LO) m += 12; while (m > HI) m -= 12; return m; };
+const T = (b,q,s) => b + ":" + q + ":" + s;
+const QUAL = { min:[0,3,7], maj:[0,4,7], min7:[0,3,7,10], maj7:[0,4,7,11],
+               min9:[0,3,7,10,14], maj9:[0,4,7,11,14], add9:[0,4,7,14],
+               sus2:[0,2,7], sus4:[0,5,7], pow:[0,7,12], dim:[0,3,6] };
+
+const ROOT_LO = 45, ROOT_HI = 56;  // the tonic changes the key, not the register
+const rootFold = m => { while (m > ROOT_HI) m -= 12; while (m < ROOT_LO) m += 12; return m; };
+
+const chordAt = (prog, i, tonic, oct) => {
+  const [semi, q] = prog[i % prog.length];
+  const root = rootFold(tonic + semi);
+  return (QUAL[q] || QUAL.min).map(iv => clampMidi(root + iv + oct*12));
+};
+const bassAt = (prog, i, tonic, oct) =>
+  clampMidi(rootFold(tonic + prog[i % prog.length][0]) + oct*12 + REG);
+
+const c  = (ch, n) => ch[((n % ch.length) + ch.length) % ch.length];
+const at = (ch, n, oct) => clampMidi(c(ch, n) + (oct || 0) * 12);
+
+const PATTERNS = {
+
+// nothing ever lands on a downbeat. the pulse is implied, never stated.
+// CELL: root, third, root, fifth — always a sixteenth late.
+// PHRASE: every fourth bar ONE note lands square on the beat, and that is the event.
+offbeat(ctx) { const {prog,tonicMidi} = ctx, mel = [];
+  for (let i = 0; i < 8; i++) {
+    const ch = chordAt(prog,i,tonicMidi,0);
+    const cell = [c(ch,0), c(ch,1), c(ch,0), c(ch,2)];
+    mel.push([T(i,0,2), midiToN(bassAt(prog,i,tonicMidi,-2)), "4n", 0.74]);
+    for (let k = 0; k < 8; k++)
+      mel.push([T(i,k>>1,(k%2)*2+2), midiToN(cell[k % 4]), "8n", k%4===0 ? 0.58 : 0.40]);
+    if (i % 4 === 3) mel.push([T(i,2,0), midiToN(at(ch,-1,1)), "4n", 0.92]);
+  }
+  return { melody: mel, mood: "aggro" }; },
+
+// long-short, long-short. a limp that never resolves.
+// CELL: the dotted pair itself — a held tone answered by a quick one above.
+// PHRASE: every fourth bar the gallop trips into two shorts instead of long-short.
+gallop(ctx) { const {prog,tonicMidi} = ctx, mel = [];
+  for (let i = 0; i < 8; i++) {
+    const ch = chordAt(prog,i,tonicMidi,0), trip = i % 4 === 3;
+    const cell = [c(ch,0), c(ch,2), c(ch,1), c(ch,-1)];
+    mel.push([T(i,0,0), midiToN(bassAt(prog,i,tonicMidi,-2)), "2n", 0.78]);
+    for (let k = 0; k < 4; k++) {
+      if (trip) {
+        mel.push([T(i,k,0), midiToN(cell[k]), "8n", 0.60]);
+        mel.push([T(i,k,2), midiToN(clampMidi(cell[(k+1)%4] + 12)), "8n", 0.52]);
+      } else {
+        mel.push([T(i,k,0), midiToN(cell[k]), "8n.", 0.62]);
+        mel.push([T(i,k,3), midiToN(clampMidi(cell[(k+1)%4] + 12)), "16n", 0.42]);
+      }
+    }
+  }
+  return { melody: mel, mood: "aggro" }; },
+
+// triplet subdivision throughout. the grid is three, never four.
+// CELL: a three-note turn that fits the triplet exactly.
+// PHRASE: every fourth bar drops into straight eighths, so the three is felt.
+swung(ctx) { const {prog,tonicMidi} = ctx, mel = [];
+  for (let i = 0; i < 8; i++) {
+    const ch = chordAt(prog,i,tonicMidi,0);
+    const cell = [c(ch,0), c(ch,1), c(ch,2)];
+    mel.push([T(i,0,0), midiToN(bassAt(prog,i,tonicMidi,-2)), "2n", 0.72]);
+    if (i % 4 === 3) {
+      for (let k = 0; k < 8; k++)
+        mel.push([T(i,k>>1,(k%2)*2), midiToN(cell[k % 3]), "8n", k%2===0 ? 0.62 : 0.40]);
+    } else {
+      for (let k = 0; k < 12; k++)
+        mel.push([T(i,(k/3)|0,(k%3)*4/3), midiToN(cell[k % 3]), "8t",
+                  k%3===0 ? 0.62 : 0.38]);
+    }
+  }
+  return { melody: mel, mood: "calm" }; },
+
+// bursts separated by whole bars of nothing. silence is the loudest part.
+// CELL: the burst — a falling run off the top of the chord.
+// PHRASE: the last burst of the piece is twice as long and does not stop.
+gasp(ctx) { const {prog,tonicMidi} = ctx, mel = [];
+  for (let i = 0; i < 8; i++) {
+    if (i % 2) continue;                       // every other bar is empty
+    const ch = chordAt(prog,i,tonicMidi,1);
+    const cell = [c(ch,-1), c(ch,2), c(ch,1), c(ch,0)];
+    const n = (i === 6) ? 16 : 8;
+    mel.push([T(i,0,0), midiToN(bassAt(prog,i,tonicMidi,-2)), "2n", 0.88]);
+    for (let k = 0; k < n; k++)
+      mel.push([T(i,(k/4)|0,(k%4)*1.0), midiToN(cell[k % 4]), "16n",
+                Math.max(0.20, 0.74 - k*0.05)]);
+  }
+  return { melody: mel, mood: "aggro" }; },
+
+// notes crowd toward the end of every bar, then reset. tidal, not metric.
+// CELL: a rising four-note figure, squeezed tighter as the bar runs out.
+// PHRASE: every fourth bar it does NOT reset — the crowd runs four notes longer.
+rush(ctx) { const {prog,tonicMidi} = ctx, mel = [];
+  for (let i = 0; i < 8; i++) {
+    const ch = chordAt(prog,i,tonicMidi,0);
+    const cell = [c(ch,0), c(ch,1), c(ch,2), c(ch,-1)];
+    mel.push([T(i,0,0), midiToN(bassAt(prog,i,tonicMidi,-2)), "1n", 0.70]);
+    const n = (i % 4 === 3) ? 14 : 10;
+    for (let k = 0; k < n; k++) {
+      const pos = Math.min(15.5, Math.pow(k/n, 1.8) * 16);
+      mel.push([T(i,(pos/4)|0,+(pos%4).toFixed(2)), midiToN(cell[k % 4]), "16n",
+                Math.min(0.95, 0.34 + k*0.045)]);
+    }
+  }
+  return { melody: mel, mood: "aggro" }; },
+
+// the mirror of rush: notes crowd at the start and thin out. exhaling.
+// CELL: a falling figure off the top of the chord.
+// PHRASE: every fourth bar the closing note is held instead of released.
+drag(ctx) { const {prog,tonicMidi} = ctx, mel = [];
+  for (let i = 0; i < 8; i++) {
+    const ch = chordAt(prog,i,tonicMidi,0);
+    const cell = [c(ch,-1), c(ch,2), c(ch,1), c(ch,0)];
+    for (let k = 0; k < 10; k++) {
+      const pos = (1 - Math.pow(1 - k/10, 1.8)) * 16;
+      mel.push([T(i,(pos/4)|0,+(pos%4).toFixed(2)), midiToN(cell[k % 4]), "16n",
+                0.76 - k*0.045]);
+    }
+    mel.push([T(i,3,2), midiToN(bassAt(prog,i,tonicMidi,-2)),
+              i % 4 === 3 ? "2n" : "4n", 0.60]);
+  }
+  return { melody: mel, mood: "calm" }; },
+
+// every note answered by a quieter copy an octave up. a wet room.
+// CELL: the call — root, fifth, third. the answer is the same shape above it.
+// PHRASE: every fourth bar the answer never comes, and the room sounds dead.
+echo(ctx) { const {prog,tonicMidi} = ctx, mel = [];
+  for (let i = 0; i < 8; i++) {
+    const ch = chordAt(prog,i,tonicMidi,1), dead = i % 4 === 3;
+    const cell = [c(ch,0), c(ch,2), c(ch,1)];
+    mel.push([T(i,0,0), midiToN(bassAt(prog,i,tonicMidi,-2)), "2n", 0.74]);
+    for (let k = 0; k < 6; k++) {
+      const n = cell[k % 3];
+      mel.push([T(i,(k*2/3)|0,(k%3)*1.3), midiToN(n), "8n", k%3===0 ? 0.64 : 0.48]);
+      if (!dead)
+        mel.push([T(i,(k*2/3)|0,(k%3)*1.3+1), midiToN(clampMidi(n+12)), "16n", 0.24]);
+    }
+  }
+  return { melody: mel, mood: "calm" }; },
+
+// a grace note a sixteenth BEFORE every beat. the piece leans forward.
+// CELL: root, third, fifth, top on the beats, each with a lean into it.
+// PHRASE: every fourth bar the lean doubles into a two-note run-up.
+lean(ctx) { const {prog,tonicMidi} = ctx, mel = [];
+  for (let i = 0; i < 8; i++) {
+    const ch = chordAt(prog,i,tonicMidi,0), dbl = i % 4 === 3;
+    const cell = [c(ch,0), c(ch,1), c(ch,2), c(ch,-1)];
+    mel.push([T(i,0,0), midiToN(bassAt(prog,i,tonicMidi,-2)), "1n", 0.70]);
+    for (let k = 0; k < 4; k++) {
+      const n = cell[k];
+      if (!(i === 0 && k === 0)) {
+        mel.push([T(i,k,3.5), midiToN(clampMidi(n-1)), "32n", 0.30]);
+        if (dbl) mel.push([T(i,k,3.0), midiToN(clampMidi(n-3)), "32n", 0.24]);
+      }
+      mel.push([T(i,k,0), midiToN(n), "4n", k===0 ? 0.72 : 0.56]);
+    }
+  }
+  return { melody: mel, mood: "calm" }; },
+
+// perfectly rigid, every subdivision filled. a machine floor.
+// CELL: a four-note figure, stated four times a bar, never varying.
+// PHRASE: every fourth bar the machine skips one tooth. a single missing sixteenth.
+clockwork(ctx) { const {prog,tonicMidi} = ctx, mel = [];
+  for (let i = 0; i < 8; i++) {
+    const ch = chordAt(prog,i,tonicMidi,0);
+    const cell = [c(ch,0), c(ch,1), c(ch,2), c(ch,1)];
+    const skip = (i % 4 === 3) ? 10 : -1;
+    for (let k = 0; k < 16; k++) {
+      if (k === skip) continue;
+      mel.push([T(i,k>>2,k%4), midiToN(cell[k % 4]), "16n", k%4===0 ? 0.66 : 0.50]);
+    }
+  }
+  return { melody: mel, mood: "aggro" }; },
+
+// each note nudged off the grid by a seeded amount. human, or drunk.
+// CELL: a fixed figure, so the only thing wandering is WHEN, not what.
+// PHRASE: every fourth bar it sobers up and locks to the grid exactly.
+stagger(ctx) { const {R,prog,tonicMidi} = ctx, mel = [];
+  for (let i = 0; i < 8; i++) {
+    const ch = chordAt(prog,i,tonicMidi,0), sober = i % 4 === 3;
+    const cell = [c(ch,0), c(ch,2), c(ch,1), c(ch,-1)];
+    mel.push([T(i,0,0), midiToN(bassAt(prog,i,tonicMidi,-2)), "2n", 0.74]);
+    for (let k = 0; k < 8; k++) {
+      const base = (k%2)*2;
+      const j = sober ? base : Math.max(0, Math.min(3.9, base + (R()-0.5)*1.2));
+      mel.push([T(i,k>>1,+j.toFixed(2)), midiToN(cell[k % 4]), "8n",
+                k%4===0 ? 0.62 : 0.42]);
+    }
+  }
+  return { melody: mel, mood: "calm" }; },
+
+// only ever on the beat. four notes a bar, nothing between. stark.
+// CELL: root, third, fifth, third — one per beat, plain.
+// PHRASE: every fourth bar a single note arrives off the beat and breaks the frame.
+pulse(ctx) { const {prog,tonicMidi} = ctx, mel = [];
+  for (let i = 0; i < 8; i++) {
+    const ch = chordAt(prog,i,tonicMidi,0), b = bassAt(prog,i,tonicMidi,-2);
+    const cell = [c(ch,0), c(ch,1), c(ch,2), c(ch,1)];
+    for (let k = 0; k < 4; k++) {
+      mel.push([T(i,k,0), midiToN(cell[k]), "4n", k===0 ? 0.82 : 0.52]);
+      if (k === 0) mel.push([T(i,k,0), midiToN(b), "4n", 0.82]);
+    }
+    if (i % 4 === 3) mel.push([T(i,2,2), midiToN(at(ch,-1,1)), "8n", 0.70]);
+  }
+  return { melody: mel, mood: "calm" }; },
+
+// bursts of thirty-seconds, two per bar, nothing else. a fit.
+// CELL: the burst shape — a scramble across the chord and off.
+// PHRASE: every fourth bar there are three bursts instead of two.
+seizure(ctx) { const {prog,tonicMidi} = ctx, mel = [];
+  for (let i = 0; i < 8; i++) {
+    const ch = chordAt(prog,i,tonicMidi,1);
+    const cell = [c(ch,0), c(ch,2), c(ch,1), c(ch,-1)];
+    const spots = (i % 4 === 3) ? [0,2,3] : [0,2];
+    for (const q of spots)
+      for (let k = 0; k < 8; k++)
+        mel.push([T(i,q,k*0.5), midiToN(cell[k % 4]), "32n", 0.78 - k*0.04]);
+    mel.push([T(i,0,0), midiToN(bassAt(prog,i,tonicMidi,-2)), "2n", 0.84]);
+  }
+  return { melody: mel, mood: "aggro" }; },
+
+// one note per bar, held its whole length. almost nothing happens.
+// CELL: which chord tone is held — it walks root, third, fifth, top across the bars.
+// PHRASE: on the fourth and eighth bars a second voice joins the held note.
+hold(ctx) { const {prog,tonicMidi} = ctx, mel = [];
+  for (let i = 0; i < 8; i++) {
+    const ch = chordAt(prog,i,tonicMidi,0);
+    const cell = [0,1,2,-1];
+    mel.push([T(i,0,0), midiToN(at(ch, cell[i % 4], 1)), "1n", 0.52]);
+    mel.push([T(i,0,0), midiToN(bassAt(prog,i,tonicMidi,-2)), "1n", 0.70]);
+    if (i % 4 === 3) mel.push([T(i,2,0), midiToN(at(ch, cell[(i+2) % 4], 0)), "2n", 0.44]);
+  }
+  return { melody: mel, mood: "calm" }; },
+
+// single notes with rests between. one line split across silence.
+// CELL: a low-high alternation, so the gaps read as two voices trading.
+// PHRASE: every fourth bar the gaps close and the line becomes continuous.
+hocket(ctx) { const {prog,tonicMidi} = ctx, mel = [];
+  for (let i = 0; i < 8; i++) {
+    const ch = chordAt(prog,i,tonicMidi,0), full = i % 4 === 3;
+    const cell = [c(ch,0), c(ch,2), c(ch,1), c(ch,-1)];
+    for (let k = 0; k < 16; k++) {
+      if (!full && k % 3) continue;
+      const hi = ((k/3)|0) % 2 === 0;
+      mel.push([T(i,k>>2,k%4), midiToN(clampMidi(cell[k % 4] + (hi ? 12 : -12))),
+                "16n", hi ? 0.46 : 0.64]);
+    }
+  }
+  return { melody: mel, mood: "calm" }; },
+
+// the bar subdivides differently each time: 4, 5, 6, 7 and back down.
+// CELL: one figure, restretched to fit whatever the subdivision is.
+// PHRASE: the widest subdivision, at the turn, gets the loudest downbeat.
+irregular(ctx) { const {prog,tonicMidi} = ctx, mel = [];
+  const divs = [4,5,6,7,7,6,5,4];
+  for (let i = 0; i < 8; i++) {
+    const ch = chordAt(prog,i,tonicMidi,0), d = divs[i];
+    const cell = [c(ch,0), c(ch,1), c(ch,-1), c(ch,2)];
+    mel.push([T(i,0,0), midiToN(bassAt(prog,i,tonicMidi,-2)), "1n", 0.70]);
+    for (let k = 0; k < d; k++) {
+      const pos = (k / d) * 16;
+      mel.push([T(i,(pos/4)|0,+(pos%4).toFixed(2)), midiToN(cell[k % 4]), "8n",
+                k===0 ? (d===7 ? 0.90 : 0.74) : 0.48]);
+    }
+  }
+  return { melody: mel, mood: "aggro" }; },
+
+// accents on 1 and 3 for four bars, then on 2 and 4. the floor shifts under you.
+// CELL: root, fifth, third, top — unchanged, so ONLY the accent moves.
+// PHRASE: the shift itself, at the halfway point, is the event of the piece.
+displace(ctx) { const {prog,tonicMidi} = ctx, mel = [];
+  for (let i = 0; i < 8; i++) {
+    const ch = chordAt(prog,i,tonicMidi,0);
+    const cell = [c(ch,0), c(ch,2), c(ch,1), c(ch,-1)];
+    const shift = i < 4 ? 0 : 1;
+    for (let k = 0; k < 8; k++) {
+      const strong = (k % 4) === shift * 2;
+      mel.push([T(i,k>>1,(k%2)*2), midiToN(cell[k % 4]), "8n", strong ? 0.84 : 0.38]);
+    }
+    mel.push([T(i,shift*2,0), midiToN(bassAt(prog,i,tonicMidi,-2)), "2n",
+              i === 4 ? 0.95 : 0.78]);
+  }
+  return { melody: mel, mood: "aggro" }; },
+
+// held chords that decay into a scatter of short notes, once a bar.
+// CELL: the scatter — a falling figure off the top of the held chord.
+// PHRASE: the last bar refuses to crumble and holds all the way through.
+crumble(ctx) { const {prog,tonicMidi} = ctx, mel = [];
+  for (let i = 0; i < 8; i++) {
+    const ch = chordAt(prog,i,tonicMidi,0);
+    const cell = [c(ch,-1), c(ch,2), c(ch,1), c(ch,0)];
+    const intact = i === 7;
+    for (const n of ch) mel.push([T(i,0,0), midiToN(n), intact ? "1n" : "2n", 0.62]);
+    if (!intact)
+      for (let k = 0; k < 6; k++)
+        mel.push([T(i,2,+(k*0.66).toFixed(2)), midiToN(clampMidi(cell[k % 4] + 12)),
+                  "16n", 0.44 - k*0.05]);
+  }
+  return { melody: mel, mood: "calm" }; },
+
+// one voice on the grid, one voice slightly ahead of it, all the way through.
+// CELL: root, third, fifth, third — stated by both voices, one a hair early.
+// PHRASE: every fourth bar the shadow disappears and the line snaps into focus.
+flam(ctx) { const {prog,tonicMidi} = ctx, mel = [];
+  for (let i = 0; i < 8; i++) {
+    const ch = chordAt(prog,i,tonicMidi,0), alone = i % 4 === 3;
+    const cell = [c(ch,0), c(ch,1), c(ch,2), c(ch,1)];
+    mel.push([T(i,0,0), midiToN(bassAt(prog,i,tonicMidi,-2)), "1n", 0.70]);
+    for (let k = 0; k < 8; k++) {
+      const n = cell[k % 4], q = k>>1, s = (k%2)*2;
+      mel.push([T(i,q,s), midiToN(n), "8n", k%4===0 ? 0.66 : 0.50]);
+      // the shadow sits 0.35 of a sixteenth early; at the top of a bar there is
+      // nowhere earlier to go, so it is dropped rather than collided
+      if (!alone && (s > 0 || q > 0))
+        mel.push([T(i, s > 0 ? q : q-1, s > 0 ? s-0.35 : 3.65),
+                  midiToN(clampMidi(n+7)), "16n", 0.30]);
+    }
+  }
+  return { melody: mel, mood: "calm" }; },
+
+};
+
+// ── PHRASING ────────────────────────────────────────────────────────────────
+// Dynamic shape over the top: downbeat accent, strong/weak inside the beat, and
+// an arc across the eight bars. Quantised to discrete steps on purpose — a
+// continuous curve gives almost every note its own velocity, which measures as
+// "varied" but plays as unsteady. Real players choose a handful of levels.
+const _STEP = 0.085;
+const _clampV = v => {
+  const q = Math.round(Math.max(0.10, Math.min(1, v)) / _STEP) * _STEP;
+  return Math.max(0.10, Math.min(1, +q.toFixed(3)));
+};
+function shapeVel(mel) {
+  return mel.map(ev => {
+    const [t, n, d, v] = ev;
+    const p = t.split(":").map(Number), bar = p[0], q = p[1] || 0, s = p[2] || 0;
+    const arc  = 0.84 + 0.30 * Math.sin(Math.PI * bar / 7);
+    const down = (q === 0 && s === 0) ? 1.16 : (s === 0 ? 1.04 : 0.90);
+    const push = 1 - (q % 2) * 0.05;
+    return [t, n, d, _clampV(v * arc * down * push)];
+  });
+}
+return  Object.fromEntries(Object.entries(PATTERNS).map(([k, fn]) =>
+  [k, ctx => { const out = fn(ctx); return { ...out, melody: shapeVel(out.melody) }; }]));
+
+})();
+  const B4    = (function(){
+// ALGO BATCH 4 — 17 patterns. Axis: VOICE COUNT AND MOTION.
+// Signature: (ctx) -> { melody, mood },  ctx = { R, prog, tonicMidi }
+//
+// REWRITTEN, same reason as batches 2 and 3. Each pattern now has
+//   1. a CELL — a figure chosen by hand and repeated so the ear catches it
+//   2. a PHRASE — an event on some bars and not others, so eight bars make a shape
+//
+// For this batch the events are about VOICES, since that is what the batch is
+// about: a voice drops out, two voices that have been apart meet on one pitch,
+// a strict rule of motion breaks for a bar. A relationship between lines is
+// only audible when it changes.
+
+const LO = 36, HI = 96;
+const REG = 12;                    // bass only — see the note in batch 2
+
+const PCN = ['C','C#','D','D#','E','F','F#','G','G#','A','A#','B'];
+const midiToN = m => { m = Math.round(m); return PCN[((m%12)+12)%12] + (Math.floor(m/12)-1); };
+const clampMidi = m => { while (m < LO) m += 12; while (m > HI) m -= 12; return m; };
+const T = (b,q,s) => b + ":" + q + ":" + s;
+const QUAL = { min:[0,3,7], maj:[0,4,7], min7:[0,3,7,10], maj7:[0,4,7,11],
+               min9:[0,3,7,10,14], maj9:[0,4,7,11,14], add9:[0,4,7,14],
+               sus2:[0,2,7], sus4:[0,5,7], pow:[0,7,12], dim:[0,3,6] };
+
+const ROOT_LO = 45, ROOT_HI = 56;  // the tonic changes the key, not the register
+const rootFold = m => { while (m > ROOT_HI) m -= 12; while (m < ROOT_LO) m += 12; return m; };
+
+const chordAt = (prog, i, tonic, oct) => {
+  const [semi, q] = prog[i % prog.length];
+  const root = rootFold(tonic + semi);
+  return (QUAL[q] || QUAL.min).map(iv => clampMidi(root + iv + oct*12));
+};
+const bassAt = (prog, i, tonic, oct) =>
+  clampMidi(rootFold(tonic + prog[i % prog.length][0]) + oct*12 + REG);
+
+const c  = (ch, n) => ch[((n % ch.length) + ch.length) % ch.length];
+const at = (ch, n, oct) => clampMidi(c(ch, n) + (oct || 0) * 12);
+
+const PATTERNS = {
+
+// one line. no accompaniment anywhere. completely exposed.
+// CELL: six notes that arch up and come back — the whole piece is this figure.
+// PHRASE: every fourth bar the line stops early and lets the silence sit.
+solo(ctx) { const {prog,tonicMidi} = ctx, mel = [];
+  for (let i = 0; i < 8; i++) {
+    const ch = chordAt(prog,i,tonicMidi,1);
+    const cell = [c(ch,0), c(ch,1), c(ch,2), c(ch,-1), c(ch,2), c(ch,1)];
+    const n = (i % 4 === 3) ? 3 : 6;
+    for (let k = 0; k < n; k++)
+      mel.push([T(i,(k*2/3)|0,(k%3)*1.33), midiToN(cell[k]), "8n",
+                k===0 ? 0.66 : 0.46]);
+  }
+  return { melody: mel, mood: "calm" }; },
+
+// two lines that never play at the same instant. they trade the bar.
+// CELL: each voice has its own figure, so you can tell who is speaking.
+// PHRASE: every fourth bar they collide once, both sounding together.
+duet(ctx) { const {prog,tonicMidi} = ctx, mel = [];
+  for (let i = 0; i < 8; i++) {
+    const ch = chordAt(prog,i,tonicMidi,0);
+    const up = [c(ch,-1), c(ch,1), c(ch,2), c(ch,1)];
+    const dn = [c(ch,0), c(ch,2), c(ch,0), c(ch,1)];
+    for (let k = 0; k < 8; k++) {
+      const upper = k % 2 === 0;
+      const n = upper ? up[(k>>1) % 4] + 12 : dn[(k>>1) % 4] - 12;
+      mel.push([T(i,k>>1,(k%2)*2), midiToN(clampMidi(n)), "8n",
+                upper ? 0.50 : 0.64]);
+    }
+    if (i % 4 === 3)
+      mel.push([T(i,2,0), midiToN(clampMidi(dn[0] - 12)), "4n", 0.72]);
+  }
+  return { melody: mel, mood: "calm" }; },
+
+// three voices, each on its own subdivision. 2, 3 and 4 against the bar.
+// CELL: a figure per voice, each fitted to its own grid.
+// PHRASE: every fourth bar all three land together on the downbeat.
+trio(ctx) { const {prog,tonicMidi} = ctx, mel = [];
+  for (let i = 0; i < 8; i++) {
+    const ch = chordAt(prog,i,tonicMidi,0), align = i % 4 === 3;
+    for (let k = 0; k < 2; k++)
+      mel.push([T(i,k*2,0), midiToN(at(ch,0,-1)), "2n", k===0 ? 0.76 : 0.58]);
+    const mid = [c(ch,1), c(ch,-1), c(ch,2)];
+    for (let k = 0; k < 3; k++)
+      mel.push([T(i,(k*4/3)|0,+((k*16/3)%4).toFixed(2)), midiToN(mid[k]), "4n", 0.52]);
+    const top = [c(ch,2), c(ch,1), c(ch,-1), c(ch,1)];
+    for (let k = 0; k < 4; k++)
+      mel.push([T(i,k,0), midiToN(clampMidi(top[k] + 12)), "8n",
+                (align && k===0) ? 0.86 : 0.36]);
+  }
+  return { melody: mel, mood: "aggro" }; },
+
+// a line and its exact inversion around the tonic. perfect contrary motion.
+// CELL: the leading figure — its mirror is derived, never chosen.
+// PHRASE: every fourth bar the mirror breaks and both voices move the same way.
+mirror(ctx) { const {prog,tonicMidi} = ctx, mel = [];
+  for (let i = 0; i < 8; i++) {
+    const ch = chordAt(prog,i,tonicMidi,0), axis = rootFold(tonicMidi);
+    const cell = [c(ch,0), c(ch,2), c(ch,1), c(ch,-1)];
+    const broken = i % 4 === 3;
+    for (let k = 0; k < 8; k++) {
+      const n = cell[k % 4] + (k > 3 ? 12 : 0), t = T(i,k>>1,(k%2)*2);
+      mel.push([t, midiToN(clampMidi(n)), "8n", k%4===0 ? 0.64 : 0.48]);
+      mel.push([t, midiToN(clampMidi(broken ? n - 7 : 2*axis - n)), "8n", 0.44]);
+    }
+  }
+  return { melody: mel, mood: "calm" }; },
+
+// two voices locked a fifth apart, moving as one block. nothing independent.
+// CELL: root, fifth, third, top — both voices play it in lockstep.
+// PHRASE: every fourth bar the lock opens from a fifth to an octave.
+parallel(ctx) { const {prog,tonicMidi} = ctx, mel = [];
+  for (let i = 0; i < 8; i++) {
+    const ch = chordAt(prog,i,tonicMidi,0);
+    const cell = [c(ch,0), c(ch,2), c(ch,1), c(ch,-1)];
+    const iv = (i % 4 === 3) ? 12 : 7;
+    mel.push([T(i,0,0), midiToN(bassAt(prog,i,tonicMidi,-2)), "1n", 0.70]);
+    for (let k = 0; k < 8; k++) {
+      const n = cell[k % 4], t = T(i,k>>1,(k%2)*2);
+      mel.push([t, midiToN(clampMidi(n)), "8n", k%4===0 ? 0.62 : 0.46]);
+      mel.push([t, midiToN(clampMidi(n + iv)), "8n", 0.42]);
+    }
+  }
+  return { melody: mel, mood: "aggro" }; },
+
+// the same line, restated two bars later underneath itself. a round.
+// CELL: a four-note figure per bar — the follower plays exactly what the leader did.
+// PHRASE: the follower stops in the last bar, leaving the leader alone.
+round(ctx) { const {prog,tonicMidi} = ctx, mel = [];
+  const line = [];
+  for (let i = 0; i < 8; i++) {
+    const ch = chordAt(prog,i,tonicMidi,0);
+    const cell = [c(ch,0), c(ch,1), c(ch,-1), c(ch,2)];
+    for (let k = 0; k < 4; k++) line.push(cell[k]);
+  }
+  for (let i = 0; i < 8; i++)
+    for (let k = 0; k < 4; k++) {
+      mel.push([T(i,k,0), midiToN(clampMidi(line[i*4+k] + 12)), "4n",
+                k===0 ? 0.60 : 0.44]);
+      if (i >= 2 && i < 7)
+        mel.push([T(i,k,0), midiToN(clampMidi(line[(i-2)*4+k] - 12)), "4n",
+                  k===0 ? 0.62 : 0.46]);
+    }
+  return { melody: mel, mood: "calm" }; },
+
+// two voices start together and pull apart a little every bar.
+// CELL: one figure, played by both — the only difference is how far apart they are.
+// PHRASE: at the halfway point they snap back together for a bar before parting again.
+diverge(ctx) { const {prog,tonicMidi} = ctx, mel = [];
+  for (let i = 0; i < 8; i++) {
+    const ch = chordAt(prog,i,tonicMidi,0);
+    const cell = [c(ch,0), c(ch,1), c(ch,2), c(ch,1), c(ch,-1), c(ch,2)];
+    const sp = (i === 4) ? 0 : i * 3;
+    for (let k = 0; k < 6; k++) {
+      const n = cell[k], t = T(i,(k*2/3)|0,(k%3)*1.33);
+      mel.push([t, midiToN(clampMidi(n - sp)), "8n", k===0 ? 0.68 : 0.50]);
+      if (sp > 0) mel.push([t, midiToN(clampMidi(n + sp)), "8n", 0.44]);
+    }
+  }
+  return { melody: mel, mood: "calm" }; },
+
+// four voices that collapse into one by the final bar.
+// CELL: root, fifth, third, top — every voice states it, just in its own octave.
+// PHRASE: the collapse itself. the last bar is a single line, struck hard.
+collapse(ctx) { const {prog,tonicMidi} = ctx, mel = [];
+  for (let i = 0; i < 8; i++) {
+    const ch = chordAt(prog,i,tonicMidi,0);
+    const cell = [0,2,1,-1];
+    const voices = Math.max(1, 4 - (i>>1));
+    for (let k = 0; k < 4; k++) {
+      const t = T(i,k,0);
+      for (let v = 0; v < voices; v++)
+        mel.push([t, midiToN(at(ch, cell[k] + v, v-1)), "4n",
+                  (voices === 1 ? 0.80 : 0.58) - v*0.07]);
+    }
+  }
+  return { melody: mel, mood: "aggro" }; },
+
+// one voice that splits into two, then four, as the piece goes on.
+// CELL: the original single line, which every new voice joins in parallel.
+// PHRASE: each split is marked — the bar a voice arrives, its first note is accented.
+divide(ctx) { const {prog,tonicMidi} = ctx, mel = [];
+  for (let i = 0; i < 8; i++) {
+    const ch = chordAt(prog,i,tonicMidi,0);
+    const cell = [c(ch,0), c(ch,1), c(ch,-1), c(ch,2)];
+    const voices = i < 3 ? 1 : i < 6 ? 2 : 4;
+    const splitBar = (i === 3 || i === 6);
+    for (let k = 0; k < 4; k++) {
+      const t = T(i,k,0);
+      for (let v = 0; v < voices; v++)
+        mel.push([t, midiToN(clampMidi(cell[k] + v*7)), "4n",
+                  (splitBar && k===0 ? 0.84 : 0.60) - v*0.06]);
+    }
+  }
+  return { melody: mel, mood: "aggro" }; },
+
+// two voices that cross through each other and swap registers halfway.
+// CELL: a shared figure, so the crossing is the only thing that happens.
+// PHRASE: at the crossing point both voices land on the same pitch.
+cross(ctx) { const {prog,tonicMidi} = ctx, mel = [];
+  for (let i = 0; i < 8; i++) {
+    const ch = chordAt(prog,i,tonicMidi,0);
+    const cell = [c(ch,0), c(ch,2), c(ch,1), c(ch,-1), c(ch,1), c(ch,2)];
+    const a = 18 - i*4, b = -18 + i*4;
+    for (let k = 0; k < 6; k++) {
+      const n = cell[k], t = T(i,(k*2/3)|0,(k%3)*1.33);
+      mel.push([t, midiToN(clampMidi(n + a)), "8n", k===0 ? 0.62 : 0.46]);
+      mel.push([t, midiToN(clampMidi(n + b)), "8n", k===0 ? 0.62 : 0.46]);
+    }
+  }
+  return { melody: mel, mood: "calm" }; },
+
+// high voice asks, low voice answers, strictly alternating bars.
+// CELL: the question and the answer are different figures, deliberately.
+// PHRASE: in the last pair the answer arrives before the question has finished.
+answer(ctx) { const {prog,tonicMidi} = ctx, mel = [];
+  for (let i = 0; i < 8; i++) {
+    const low = i % 2 === 1;
+    const ch = chordAt(prog,i,tonicMidi, low ? -1 : 1);
+    const cell = low ? [c(ch,0), c(ch,0), c(ch,2), c(ch,1)]
+                     : [c(ch,-1), c(ch,2), c(ch,1), c(ch,-1), c(ch,1), c(ch,0)];
+    const n = low ? 4 : 6;
+    for (let k = 0; k < n; k++)
+      mel.push([T(i,(k*4/n)|0,+((k*16/n)%4).toFixed(2)), midiToN(cell[k]), "8n",
+                (low ? 0.64 : 0.46) + (k===0 ? 0.10 : 0)]);
+    if (i === 6) {                       // the answer cuts in early, just once
+      const ans = chordAt(prog,i,tonicMidi,-1);
+      mel.push([T(i,3,0), midiToN(c(ans,0)), "4n", 0.70]);
+    }
+  }
+  return { melody: mel, mood: "calm" }; },
+
+// a held pedal under two voices that move freely against it.
+// CELL: an upper figure and a slower inner one, both over the same drone.
+// PHRASE: the drone drops out for one bar in four and the floor vanishes.
+pedal(ctx) { const {prog,tonicMidi} = ctx, mel = [];
+  const drone = clampMidi(rootFold(tonicMidi) - 12);
+  for (let i = 0; i < 8; i++) {
+    const ch = chordAt(prog,i,tonicMidi,0);
+    const upper = [c(ch,-1), c(ch,1), c(ch,2), c(ch,1), c(ch,0)];
+    const inner = [c(ch,1), c(ch,2), c(ch,0)];
+    if (i % 4 !== 2) mel.push([T(i,0,0), midiToN(drone), "1n", 0.68]);
+    for (let k = 0; k < 5; k++)
+      mel.push([T(i,(k*4/5)|0,+((k*16/5)%4).toFixed(2)), midiToN(upper[k]), "8n",
+                k===0 ? 0.58 : 0.42]);
+    for (let k = 0; k < 3; k++)
+      mel.push([T(i,k+1,2), midiToN(clampMidi(inner[k] + 12)), "8n", 0.32]);
+  }
+  return { melody: mel, mood: "calm" }; },
+
+// voices a semitone apart moving together. a cluster that never resolves.
+// CELL: root, fifth, third, top — each smeared into a three-semitone stack.
+// PHRASE: every fourth bar the cluster resolves to a clean chord, then re-forms.
+cluster(ctx) { const {prog,tonicMidi} = ctx, mel = [];
+  for (let i = 0; i < 8; i++) {
+    const ch = chordAt(prog,i,tonicMidi,0), clean = i % 4 === 3;
+    const cell = [c(ch,0), c(ch,2), c(ch,1), c(ch,-1)];
+    mel.push([T(i,0,0), midiToN(bassAt(prog,i,tonicMidi,-2)), "2n", 0.78]);
+    for (let k = 0; k < 8; k++) {
+      const n = cell[k % 4], t = T(i,k>>1,(k%2)*2);
+      // SPREAD, not crushed. [0,1,2] put three adjacent semitones in the same
+      // octave, which on a sampled piano with reverb is mud, not a chord.
+      // Same pitch classes, octave-displaced: the semitone becomes a minor 9th,
+      // which reads as deliberate tension instead of a broken note.
+      const offs = clean ? [0,4,7] : [0,13,25];
+      for (const o of offs)
+        mel.push([t, midiToN(clampMidi(n+o)), "8n",
+                  (k%4===0 ? 0.54 : 0.42) - (o/13)*0.06]);
+    }
+  }
+  return { melody: mel, mood: "aggro" }; },
+
+// two lines interlocking note for note so neither is audible alone.
+// CELL: one figure ascending, one descending, threaded through each other.
+// PHRASE: every fourth bar one strand drops out and the other is finally heard.
+weave(ctx) { const {prog,tonicMidi} = ctx, mel = [];
+  for (let i = 0; i < 8; i++) {
+    const ch = chordAt(prog,i,tonicMidi,0), bare = i % 4 === 3;
+    const up = [c(ch,0), c(ch,1), c(ch,2), c(ch,-1)];
+    const dn = [c(ch,-1), c(ch,2), c(ch,1), c(ch,0)];
+    for (let k = 0; k < 16; k++) {
+      const isUp = k % 2 === 0;
+      if (bare && !isUp) continue;
+      const n = isUp ? up[(k>>1) % 4] + 12 : dn[(k>>1) % 4] - 5;
+      mel.push([T(i,k>>2,k%4), midiToN(clampMidi(n)), "16n",
+                (k%4===0 ? 0.62 : 0.46) * (isUp ? 0.92 : 1)]);
+    }
+  }
+  return { melody: mel, mood: "aggro" }; },
+
+// every voice plays the same rhythm but a different chord tone. a block choir.
+// CELL: the block itself — one shared figure, harmonised in four parts.
+// PHRASE: every fourth bar the top voice breaks away and moves alone.
+choir(ctx) { const {prog,tonicMidi} = ctx, mel = [];
+  for (let i = 0; i < 8; i++) {
+    const ch = chordAt(prog,i,tonicMidi,0), split = i % 4 === 3;
+    const cell = [0,1,-1,2,1];
+    for (let k = 0; k < 5; k++) {
+      const t = T(i,(k*4/5)|0,+((k*16/5)%4).toFixed(2));
+      for (let v = 0; v < ch.length; v++) {
+        if (split && v === ch.length-1) continue;
+        mel.push([t, midiToN(at(ch, cell[k] + v, v-1)), "8n",
+                  0.52 - Math.abs(v-1)*0.07]);
+      }
+    }
+    if (split)
+      for (let k = 0; k < 4; k++)
+        mel.push([T(i,k,2), midiToN(at(ch, -1 - k, 1)), "8n", 0.50]);
+  }
+  return { melody: mel, mood: "calm" }; },
+
+// the number of voices is redrawn from the seed every bar. unstable ensemble.
+// CELL: one fixed figure, so the ONLY thing changing is how many are playing it.
+// PHRASE: the final bar is always full, whatever the seed said.
+ensemble(ctx) { const {R,prog,tonicMidi} = ctx, mel = [];
+  for (let i = 0; i < 8; i++) {
+    const ch = chordAt(prog,i,tonicMidi,0);
+    const cell = [c(ch,0), c(ch,1), c(ch,-1), c(ch,2)];
+    const voices = (i === 7) ? 4 : 1 + Math.floor(R() * 4);
+    mel.push([T(i,0,0), midiToN(bassAt(prog,i,tonicMidi,-2)), "1n", 0.70]);
+    for (let k = 0; k < 4; k++) {
+      const t = T(i,k,0);
+      for (let v = 0; v < voices; v++)
+        mel.push([t, midiToN(clampMidi(cell[k] + v*5)), "4n",
+                  (k===0 ? 0.62 : 0.48) - v*0.06]);
+    }
+  }
+  return { melody: mel, mood: "aggro" }; },
+
+// many near-identical voices, each a fraction behind the last. a smear.
+// CELL: one figure, entered five times at slightly different moments.
+// PHRASE: every fourth bar all five enter together and the smear becomes a chord.
+swarm(ctx) { const {prog,tonicMidi} = ctx, mel = [];
+  for (let i = 0; i < 8; i++) {
+    const ch = chordAt(prog,i,tonicMidi,0), tight = i % 4 === 3;
+    const cell = [c(ch,0), c(ch,2), c(ch,1), c(ch,-1)];
+    for (let k = 0; k < 4; k++)
+      for (let v = 0; v < 5; v++)
+        mel.push([T(i,k,tight ? 0 : +(v*0.28).toFixed(2)),
+                  midiToN(clampMidi(cell[k] + (v-2)*7)), "16n",
+                  (tight ? 0.60 : 0.52) - v*0.07]);
+  }
+  return { melody: mel, mood: "aggro" }; },
+
+};
+
+// ── PHRASING ────────────────────────────────────────────────────────────────
+// Dynamic shape over the top: downbeat accent, strong/weak inside the beat, and
+// an arc across the eight bars. Quantised to discrete steps on purpose — a
+// continuous curve gives almost every note its own velocity, which measures as
+// "varied" but plays as unsteady. Real players choose a handful of levels.
+const _STEP = 0.085;
+const _clampV = v => {
+  const q = Math.round(Math.max(0.10, Math.min(1, v)) / _STEP) * _STEP;
+  return Math.max(0.10, Math.min(1, +q.toFixed(3)));
+};
+function shapeVel(mel) {
+  return mel.map(ev => {
+    const [t, n, d, v] = ev;
+    const p = t.split(":").map(Number), bar = p[0], q = p[1] || 0, s = p[2] || 0;
+    const arc  = 0.84 + 0.30 * Math.sin(Math.PI * bar / 7);
+    const down = (q === 0 && s === 0) ? 1.16 : (s === 0 ? 1.04 : 0.90);
+    const push = 1 - (q % 2) * 0.05;
+    return [t, n, d, _clampV(v * arc * down * push)];
+  });
+}
+return  Object.fromEntries(Object.entries(PATTERNS).map(([k, fn]) =>
+  [k, ctx => { const out = fn(ctx); return { ...out, melody: shapeVel(out.melody) }; }]));
+
+})();
+  const B5    = (function(){
+// ALGO BATCH 5 — 10 patterns. Axis: DEVELOPMENT. Register: LIGHT.
+// Signature: (ctx) -> { melody, mood },  ctx = { R, prog, tonicMidi }
+//
+// Two things make this batch its own thing.
+//
+// DEVELOPMENT. The other four batches repeat a cell and vary the frame around
+// it: where it sits, when it lands, how many voices carry it. Here the CELL
+// ITSELF CHANGES. Each piece states a figure in bar one and then does something
+// to it for seven bars — stretches it, cuts it down, turns it upside down,
+// moves it up a step at a time, wears it away to one note. The theme is the
+// subject and the transformation is the piece.
+//
+// LIGHT. Everything else in the collection is deep and dark. This set is the
+// counterweight: it sits an octave higher, the bass is thinner and often
+// absent, velocities are softer, and every chord is brightened before it is
+// used — minors become sus2 and min9, majors gain a ninth, diminished chords
+// are pulled to sus4 so nothing bites. It should sound like light on water
+// rather than something under it.
+
+const LO = 36, HI = 96;
+
+const PCN = ['C','C#','D','D#','E','F','F#','G','G#','A','A#','B'];
+const midiToN = m => { m = Math.round(m); return PCN[((m%12)+12)%12] + (Math.floor(m/12)-1); };
+const clampMidi = m => { while (m < LO) m += 12; while (m > HI) m -= 12; return m; };
+const T = (b,q,s) => b + ":" + q + ":" + s;
+
+// BRIGHTENED VOICINGS. The progressions are written for the dark set, so each
+// quality is remapped to an open, unresolved cousin: no bare minor triads, no
+// diminished, ninths and sixths everywhere. Same harmony, different weather.
+const QUAL = {
+  min:  [0,3,7,14],      min7: [0,3,7,10,14],   min9: [0,3,7,14,17],
+  maj:  [0,4,7,14],      maj7: [0,4,7,11,14],   maj9: [0,4,7,14,16],
+  add9: [0,4,7,14,21],   sus2: [0,2,7,14],      sus4: [0,5,7,14],
+  pow:  [0,7,14,19],     dim:  [0,5,7,14],      // dim pulled to sus4 — no bite
+};
+
+// LIGHT REGISTER. +12 on top of the normal root band. This is the one batch
+// where lifting the chords is the point rather than a mistake.
+const LIFT = 12;
+const ROOT_LO = 45, ROOT_HI = 56;
+const rootFold = m => { while (m > ROOT_HI) m -= 12; while (m < ROOT_LO) m += 12; return m; };
+
+const chordAt = (prog, i, tonic, oct) => {
+  const [semi, q] = prog[i % prog.length];
+  const root = rootFold(tonic + semi) + LIFT;
+  return (QUAL[q] || QUAL.sus2).map(iv => clampMidi(root + iv + oct*12));
+};
+// the bass here is a light touch, not a foundation — one octave higher than the
+// dark batches use, and often left out entirely by the pattern
+const bassAt = (prog, i, tonic, oct) =>
+  clampMidi(rootFold(tonic + prog[i % prog.length][0]) + oct*12 + 12);
+
+const c  = (ch, n) => ch[((n % ch.length) + ch.length) % ch.length];
+const at = (ch, n, oct) => clampMidi(c(ch, n) + (oct || 0) * 12);
+
+const PATTERNS = {
+
+// the figure doubles in length every two bars. by the end one note fills a bar.
+// CELL: root, ninth, fifth, top — stated fast, then slower, then slower again.
+// PHRASE: the stretching itself. the last bars are single sustained tones.
+augment(ctx) { const {prog,tonicMidi} = ctx, mel = [];
+  const DUR = ["16n","8n","4n","2n"], STEP = [1,2,4,8];
+  for (let i = 0; i < 8; i++) {
+    const ch = chordAt(prog,i,tonicMidi,0), stage = i >> 1;
+    const cell = [c(ch,0), c(ch,3), c(ch,2), c(ch,-1)];
+    if (i % 2 === 0) mel.push([T(i,0,0), midiToN(bassAt(prog,i,tonicMidi,-1)), "1n", 0.34]);
+    for (let k = 0, pos = 0; pos < 16; k++, pos += STEP[stage])
+      mel.push([T(i,(pos/4)|0,pos%4), midiToN(cell[k % 4]), DUR[stage],
+                k%4===0 ? 0.44 : 0.28]);
+  }
+  return { melody: mel, mood: "calm" }; },
+
+// the mirror of augment. one held note becomes a shimmer of sixteenths.
+// CELL: the same four notes throughout, only the speed changes.
+// PHRASE: the compression — but bright, so it glitters instead of hammering.
+diminish(ctx) { const {prog,tonicMidi} = ctx, mel = [];
+  const DUR = ["2n","4n","8n","16n"], STEP = [8,4,2,1];
+  for (let i = 0; i < 8; i++) {
+    const ch = chordAt(prog,i,tonicMidi,0), stage = i >> 1;
+    const cell = [c(ch,-1), c(ch,3), c(ch,2), c(ch,0)];
+    if (i % 4 === 0) mel.push([T(i,0,0), midiToN(bassAt(prog,i,tonicMidi,-1)), "1n", 0.36]);
+    for (let k = 0, pos = 0; pos < 16; k++, pos += STEP[stage])
+      mel.push([T(i,(pos/4)|0,pos%4), midiToN(cell[k % 4]), DUR[stage],
+                k%4===0 ? 0.46 : 0.26 + stage*0.02]);
+  }
+  return { melody: mel, mood: "calm" }; },
+
+// a six-note figure that loses its last note every bar until one is left.
+// CELL: the full six, stated in bar one so the ear has it before it erodes.
+// PHRASE: the erosion. the closing bars are a single repeated high note.
+fragment(ctx) { const {prog,tonicMidi} = ctx, mel = [];
+  for (let i = 0; i < 8; i++) {
+    const ch = chordAt(prog,i,tonicMidi,1);
+    const cell = [c(ch,0), c(ch,2), c(ch,3), c(ch,-1), c(ch,3), c(ch,2)];
+    const n = Math.max(1, 6 - i);
+    if (i < 5) mel.push([T(i,0,0), midiToN(bassAt(prog,i,tonicMidi,-1)), "1n", 0.32]);
+    for (let k = 0; k < 8; k++)
+      mel.push([T(i,k>>1,(k%2)*2), midiToN(cell[k % n]), "8n", k%n===0 ? 0.44 : 0.26]);
+  }
+  return { melody: mel, mood: "calm" }; },
+
+// one note that gains a neighbour every bar until a full figure exists.
+// CELL: built up in front of you — the piece is the figure assembling itself.
+// PHRASE: each new note arrives brighter on the bar it joins.
+accrete(ctx) { const {prog,tonicMidi} = ctx, mel = [];
+  for (let i = 0; i < 8; i++) {
+    const ch = chordAt(prog,i,tonicMidi,0);
+    const full = [c(ch,0), c(ch,2), c(ch,3), c(ch,-1), c(ch,3), c(ch,2)];
+    const n = Math.min(6, 1 + i);
+    mel.push([T(i,0,0), midiToN(bassAt(prog,i,tonicMidi,-1)), "1n", 0.34]);
+    for (let k = 0; k < 8; k++) {
+      const idx = k % n;
+      mel.push([T(i,k>>1,(k%2)*2), midiToN(full[idx]), "8n",
+                idx === n-1 ? 0.56 : 0.28]);     // the newest note is the bright one
+    }
+  }
+  return { melody: mel, mood: "calm" }; },
+
+// the figure, then the same figure upside down, then both at once.
+// CELL: a rising four-note shape. its inversion is derived, never chosen.
+// PHRASE: three clear sections — subject, answer, and the two together.
+invert(ctx) { const {prog,tonicMidi} = ctx, mel = [];
+  for (let i = 0; i < 8; i++) {
+    const ch = chordAt(prog,i,tonicMidi,0), axis = rootFold(tonicMidi) + LIFT + 12;
+    const cell = [c(ch,0), c(ch,2), c(ch,3), c(ch,-1)];
+    const both = i >= 6, upside = i >= 3 && i < 6;
+    if (i % 2 === 0) mel.push([T(i,0,0), midiToN(bassAt(prog,i,tonicMidi,-1)), "1n", 0.32]);
+    for (let k = 0; k < 8; k++) {
+      const n = cell[k % 4], t = T(i,k>>1,(k%2)*2);
+      if (!upside) mel.push([t, midiToN(clampMidi(n)), "8n", k%4===0 ? 0.46 : 0.28]);
+      if (upside || both) mel.push([t, midiToN(clampMidi(2*axis - n)), "8n",
+                                    k%4===0 ? 0.44 : 0.26]);
+    }
+  }
+  return { melody: mel, mood: "calm" }; },
+
+// the figure forwards for four bars, then backwards for four.
+// CELL: a six-note shape with a clear direction, so reversing it is audible.
+// PHRASE: the turn at the halfway point, marked by a single brighter note.
+retrograde(ctx) { const {prog,tonicMidi} = ctx, mel = [];
+  for (let i = 0; i < 8; i++) {
+    const ch = chordAt(prog,i,tonicMidi,0);
+    let cell = [c(ch,0), c(ch,2), c(ch,3), c(ch,-1), c(ch,-1,1), c(ch,3,1)];
+    if (i >= 4) cell = cell.slice().reverse();
+    if (i % 2 === 0) mel.push([T(i,0,0), midiToN(bassAt(prog,i,tonicMidi,-1)), "1n", 0.32]);
+    for (let k = 0; k < 6; k++)
+      mel.push([T(i,(k*2/3)|0,(k%3)*1.33), midiToN(clampMidi(cell[k])), "8n",
+                (i === 4 && k === 0) ? 0.62 : (k===0 ? 0.44 : 0.26)]);
+  }
+  return { melody: mel, mood: "calm" }; },
+
+// the same figure, moved up one chord tone every bar. a rising sequence.
+// CELL: four notes whose SHAPE never changes, only its starting degree.
+// PHRASE: the climb. the last bar drops back to where it began.
+sequence(ctx) { const {prog,tonicMidi} = ctx, mel = [];
+  for (let i = 0; i < 8; i++) {
+    const ch = chordAt(prog,i,tonicMidi,0);
+    const step = (i === 7) ? 0 : i;
+    const cell = [0,2,1,3].map(d => at(ch, d + step, (d + step) >= ch.length ? 1 : 0));
+    mel.push([T(i,0,0), midiToN(bassAt(prog,i,tonicMidi,-1)), "1n", 0.34]);
+    for (let k = 0; k < 8; k++)
+      mel.push([T(i,k>>1,(k%2)*2), midiToN(cell[k % 4]), "8n", k%4===0 ? 0.48 : 0.28]);
+  }
+  return { melody: mel, mood: "calm" }; },
+
+// a figure that wears down to its smallest unit and then rings on it.
+// CELL: five notes that reduce to two, then to one, high and repeating.
+// PHRASE: the liquidation — a real technique, and the whole point of the piece.
+liquidate(ctx) { const {prog,tonicMidi} = ctx, mel = [];
+  for (let i = 0; i < 8; i++) {
+    const ch = chordAt(prog,i,tonicMidi,0);
+    const full = [c(ch,0), c(ch,2), c(ch,3), c(ch,-1), c(ch,2)];
+    if (i < 6) mel.push([T(i,0,0), midiToN(bassAt(prog,i,tonicMidi,-1)), "1n", 0.34]);
+    if (i < 3) {
+      for (let k = 0; k < 5; k++)
+        mel.push([T(i,(k*4/5)|0,+((k*16/5)%4).toFixed(2)), midiToN(full[k]), "8n",
+                  k===0 ? 0.46 : 0.28]);
+    } else if (i < 6) {
+      for (let k = 0; k < 8; k++)
+        mel.push([T(i,k>>1,(k%2)*2), midiToN(full[k % 2]), "8n", k%2===0 ? 0.44 : 0.28]);
+    } else {
+      for (let k = 0; k < 16; k++)
+        mel.push([T(i,k>>2,k%4), midiToN(clampMidi(full[0] + 12)), "16n",
+                  k%4===0 ? 0.46 : 0.24]);
+    }
+  }
+  return { melody: mel, mood: "calm" }; },
+
+// the figure keeps getting cut off before it finishes. at the end it gets through.
+// CELL: a seven-note line that wants to resolve and is not allowed to.
+// PHRASE: six truncations, then one complete statement in the last bar.
+interrupt(ctx) { const {prog,tonicMidi} = ctx, mel = [];
+  const CUT = [3,5,2,4,3,6,2,7];
+  for (let i = 0; i < 8; i++) {
+    const ch = chordAt(prog,i,tonicMidi,0);
+    const cell = [c(ch,0), c(ch,2), c(ch,3), c(ch,-1), c(ch,3), c(ch,2), c(ch,0,1)];
+    const n = CUT[i], done = n === 7;
+    if (i % 2 === 0) mel.push([T(i,0,0), midiToN(bassAt(prog,i,tonicMidi,-1)), "2n", 0.34]);
+    for (let k = 0; k < n; k++)
+      mel.push([T(i,(k*2/3)|0,+((k*8/3)%4).toFixed(2)), midiToN(cell[k]), "8n",
+                (done && k === 6) ? 0.64 : (k===0 ? 0.46 : 0.28)]);
+  }
+  return { melody: mel, mood: "calm" }; },
+
+// one figure becomes a different figure, one note at a time.
+// CELL: two cells — the piece starts on the first and ends on the second, and
+// every bar swaps one more note across, so you never hear the change happen.
+// PHRASE: the crossfade itself, complete by the final bar.
+morph(ctx) { const {prog,tonicMidi} = ctx, mel = [];
+  for (let i = 0; i < 8; i++) {
+    const ch = chordAt(prog,i,tonicMidi,0);
+    const from = [c(ch,0), c(ch,2), c(ch,3), c(ch,2), c(ch,0), c(ch,3)];
+    const to   = [c(ch,-1,1), c(ch,3), c(ch,-1), c(ch,0,1), c(ch,2), c(ch,-1,1)];
+    const swapped = Math.round((i / 7) * 6);
+    const cell = from.map((n, k) => k < swapped ? to[k] : n);
+    if (i % 2 === 0) mel.push([T(i,0,0), midiToN(bassAt(prog,i,tonicMidi,-1)), "1n", 0.32]);
+    for (let k = 0; k < 6; k++)
+      mel.push([T(i,(k*2/3)|0,(k%3)*1.33), midiToN(clampMidi(cell[k])), "8n",
+                k === swapped-1 ? 0.54 : (k===0 ? 0.44 : 0.26)]);
+  }
+  return { melody: mel, mood: "calm" }; },
+
+};
+
+// ── PHRASING ────────────────────────────────────────────────────────────────
+// Same dynamic shape as batches 2-4, but scaled down: this set should never
+// push. The arc and the accents are there, just quieter across the board.
+const _STEP = 0.085;
+const _clampV = v => {
+  const q = Math.round(Math.max(0.10, Math.min(0.78, v)) / _STEP) * _STEP;
+  return Math.max(0.10, Math.min(0.78, +q.toFixed(3)));
+};
+function shapeVel(mel) {
+  return mel.map(ev => {
+    const [t, n, d, v] = ev;
+    const p = t.split(":").map(Number), bar = p[0], q = p[1] || 0, s = p[2] || 0;
+    const arc  = 0.86 + 0.24 * Math.sin(Math.PI * bar / 7);
+    const down = (q === 0 && s === 0) ? 1.12 : (s === 0 ? 1.03 : 0.92);
+    const push = 1 - (q % 2) * 0.04;
+    return [t, n, d, _clampV(v * arc * down * push)];
+  });
+}
+return  Object.fromEntries(Object.entries(PATTERNS).map(([k, fn]) =>
+  [k, ctx => { const out = fn(ctx); return { ...out, melody: shapeVel(out.melody) }; }]));
+
+})();
+  const FIXED = [{"name":"HUSH","mood":"calm","melody":[["0:0:0","A2","1n",0.55],["0:0:0","A4","2n.",0.7],["0:3:0","C5","4n",0.6],["1:0:0","G2","1n",0.5],["1:0:0","G4","2n.",0.6],["1:3:0","B4","4n",0.55],["2:0:0","F2","1n",0.5],["2:0:0","F4","4n",0.6],["2:1:0","A4","4n",0.55],["2:2:0","C5","4n",0.6],["2:3:0","E5","4n",0.7],["3:0:0","E2","2n",0.55],["3:0:0","D5","2n",0.65],["3:2:0","C5","2n",0.55],["4:0:0","A2","2n",0.5],["4:1:0","B4","4n",0.5],["4:2:0","A4","2n",0.5],["5:0:0","F2","2n",0.5],["5:0:0","E4","4n",0.55],["5:1:0","G4","4n",0.55],["5:2:0","B4","4n",0.6],["5:3:0","D5","4n",0.65],["6:0:0","A2","1n",0.55],["6:0:0","E5","4n",0.7],["6:1:0","F5","4n",0.7],["6:2:0","E5","4n",0.6],["6:3:0","C5","4n",0.55],["7:0:0","A2","1n",0.6],["7:0:0","A4","1n",0.65]]},{"name":"SLOW LIGHT","mood":"calm","melody":[["0:0:0","D2","1n",0.5],["0:0:0","D4","1n",0.55],["0:2:0","F4","2n",0.5],["1:0:0","A4","1n",0.6],["1:2:0","G4","2n",0.5],["2:0:0","C2","1n",0.5],["2:0:0","E4","1n",0.55],["2:2:0","G4","2n",0.55],["3:0:0","F4","1n",0.55],["3:2:0","E4","2n",0.5],["4:0:0","D2","1n",0.5],["4:0:0","D5","1n",0.65],["4:2:0","C5","2n",0.55],["5:0:0","A4","1n",0.55],["5:2:0","F4","2n",0.5],["6:0:0","F2","1n",0.5],["6:0:0","G4","2n",0.55],["6:2:0","A4","2n",0.6],["7:0:0","D4","1n",0.55],["7:0:0","D2","1n",0.55]]},{"name":"DRIFT","mood":"calm","melody":[["0:0:0","E2","2n",0.5],["0:0:0","E4","4n",0.55],["0:1:0","G4","4n",0.55],["0:2:0","B4","4n",0.55],["0:3:0","D5","4n",0.6],["1:0:0","E5","2n",0.65],["1:2:0","D5","4n",0.55],["1:3:0","B4","4n",0.5],["2:0:0","C2","2n",0.5],["2:0:0","G4","4n",0.55],["2:1:0","B4","4n",0.55],["2:2:0","C5","4n",0.55],["2:3:0","E5","4n",0.6],["3:0:0","G5","2n.",0.65],["3:3:0","E5","4n",0.55],["4:0:0","A2","2n",0.5],["4:0:0","C5","4n",0.55],["4:1:0","E5","4n",0.55],["4:2:0","G5","4n",0.6],["4:3:0","A5","4n",0.65],["5:0:0","G5","2n.",0.55],["5:3:0","E5","4n",0.5],["6:0:0","G2","2n",0.5],["6:0:0","B4","4n",0.55],["6:1:0","D5","4n",0.55],["6:2:0","G5","4n",0.6],["6:3:0","F#5","4n",0.55],["7:0:0","E5","1n",0.6]]},{"name":"EMPTY ROOM","mood":"calm","melody":[["0:0:0","A1","1n",0.45],["1:0:0","A1","1n",0.45],["2:0:0","A4","1n",0.5],["3:0:0","C5","1n",0.5],["4:0:0","F1","1n",0.4],["5:0:0","F1","1n",0.4],["6:0:0","G4","1n",0.45],["7:0:0","A4","1n",0.5]]},{"name":"BREATH","mood":"calm","melody":[["0:0:0","C2","1n",0.5],["0:2:0","C4","2n",0.55],["1:0:0","G2","1n",0.45],["1:2:0","E4","2n",0.5],["2:0:0","A2","1n",0.5],["2:0:0","G4","1n",0.55],["2:3:0","A4","4n",0.5],["3:0:0","F2","1n",0.45],["3:0:0","F4","1n",0.55],["3:3:0","G4","4n",0.5],["4:0:0","C2","1n",0.5],["4:2:0","E4","2n",0.55],["5:0:0","G2","1n",0.5],["5:2:0","C5","2n",0.6],["6:0:0","A2","1n",0.5],["6:0:0","B4","1n",0.55],["7:0:0","C2","1n",0.55],["7:0:0","C5","1n",0.6]]},{"name":"TIDE","mood":"calm","melody":[["0:0:0","D2","2n",0.5],["0:1:0","F4","8n",0.45],["0:1:2","A4","8n",0.5],["0:2:0","D5","4n",0.55],["0:3:0","A4","4n",0.5],["1:0:0","F2","2n",0.5],["1:1:0","A4","8n",0.5],["1:1:2","C5","8n",0.55],["1:2:0","F5","4n",0.6],["1:3:0","C5","4n",0.55],["2:0:0","C2","2n",0.5],["2:1:0","G4","8n",0.5],["2:1:2","C5","8n",0.55],["2:2:0","G5","4n",0.6],["2:3:0","C5","4n",0.5],["3:0:0","A1","2n",0.45],["3:1:0","E4","8n",0.45],["3:1:2","A4","8n",0.5],["3:2:0","C5","4n",0.55],["3:3:0","A4","4n",0.5],["4:0:0","D2","1n",0.5],["4:0:0","D5","2n",0.6],["4:2:0","C5","4n",0.55],["4:3:0","A4","4n",0.5],["5:0:0","F2","1n",0.5],["5:0:0","F5","2n",0.6],["5:2:0","E5","4n",0.55],["5:3:0","D5","4n",0.5],["6:0:0","C2","1n",0.5],["6:0:0","C5","2n",0.55],["6:2:0","B4","4n",0.5],["6:3:0","A4","4n",0.5],["7:0:0","D2","1n",0.55],["7:0:0","D5","1n",0.6]]},{"name":"WHISPER","mood":"calm","melody":[["0:0:0","E2","1n",0.4],["0:0:0","B4","4n",0.45],["0:1:0","G4","4n",0.4],["0:2:0","B4","4n",0.45],["0:3:0","E5","4n",0.5],["1:0:0","B1","1n",0.4],["1:0:0","F#4","4n",0.45],["1:1:0","B4","4n",0.45],["1:2:0","D5","4n",0.5],["1:3:0","F#5","4n",0.5],["2:0:0","C2","1n",0.4],["2:0:0","G4","4n",0.45],["2:1:0","C5","4n",0.45],["2:2:0","E5","4n",0.5],["2:3:0","G5","4n",0.55],["3:0:0","G2","1n",0.4],["3:0:0","D5","2n.",0.45],["3:3:0","B4","4n",0.4],["4:0:0","E2","1n",0.4],["4:2:0","E5","2n",0.5],["5:0:0","B1","1n",0.4],["5:2:0","F#5","2n",0.5],["6:0:0","A1","1n",0.4],["6:0:0","C5","1n",0.5],["7:0:0","E2","1n",0.45],["7:0:0","B4","1n",0.5]]},{"name":"STAB","mood":"aggro","melody":[["0:0:0","A2","8n",0.95],["0:0:0","A4","8n",0.9],["0:0:0","C5","8n",0.85],["0:0:0","E5","8n",0.85],["0:1:0","A2","8n",0.85],["0:1:0","C5","8n",0.8],["0:2:0","G2","8n",0.95],["0:2:0","G4","8n",0.9],["0:2:0","B4","8n",0.85],["0:3:0","G4","8n",0.8],["1:0:0","F2","8n",0.95],["1:0:0","F4","8n",0.9],["1:0:0","A4","8n",0.85],["1:0:0","C5","8n",0.85],["1:1:0","F2","8n",0.8],["1:2:0","E2","8n",0.95],["1:2:0","E4","8n",0.9],["1:2:0","G4","8n",0.85],["1:2:0","B4","8n",0.8],["2:0:0","A2","4n",1],["2:0:0","A4","4n",0.95],["2:0:0","C5","4n",0.9],["2:0:0","E5","4n",0.85],["2:2:0","F2","4n",0.9],["2:2:0","F4","4n",0.85],["2:2:0","C5","4n",0.8],["3:0:0","G2","8n",0.95],["3:0:0","G4","8n",0.9],["3:1:0","B4","8n",0.85],["3:2:0","D5","8n",0.9],["3:3:0","E5","8n",0.95],["4:0:0","A2","8n",0.95],["4:0:0","E5","8n",0.95],["4:1:0","C5","8n",0.85],["4:2:0","A2","8n",0.9],["4:2:0","B4","8n",0.85],["4:3:0","A4","8n",0.85],["5:0:0","F2","8n",0.9],["5:0:0","F4","8n",0.85],["5:1:0","G4","8n",0.85],["5:2:0","F2","8n",0.85],["5:2:0","B4","8n",0.85],["5:3:0","C5","8n",0.85],["6:0:0","E2","4n",0.95],["6:0:0","E4","4n",0.9],["6:0:0","G4","4n",0.85],["6:0:0","B4","4n",0.85],["6:2:0","A2","4n",0.95],["6:2:0","A4","4n",0.9],["6:2:0","E5","4n",0.85],["7:0:0","A2","1n",1],["7:0:0","A4","1n",0.95],["7:0:0","C5","1n",0.9],["7:0:0","E5","1n",0.95]]},{"name":"KNIFE","mood":"aggro","melody":[["0:0:0","A2","16n",0.9],["0:0:2","B2","16n",0.9],["0:1:0","C3","16n",0.95],["0:1:2","C#3","16n",0.95],["0:2:0","D3","16n",0.9],["0:2:2","D#3","16n",0.9],["0:3:0","E3","16n",0.95],["0:3:2","F3","16n",1],["1:0:0","A4","16n",0.95],["1:0:1","B4","16n",0.9],["1:0:2","C5","16n",0.95],["1:0:3","C#5","16n",0.95],["1:1:0","D5","16n",0.95],["1:1:1","D#5","16n",0.95],["1:1:2","E5","16n",1],["1:1:3","F5","16n",1],["1:2:0","F#5","8n",0.95],["1:3:0","F5","8n",0.9],["2:0:0","E5","8n",0.85],["2:1:0","D#5","8n",0.85],["2:2:0","D5","8n",0.85],["2:3:0","C#5","8n",0.85],["3:0:0","C5","4n",0.9],["3:2:0","B4","4n",0.85],["4:0:0","A2","16n",0.95],["4:0:1","C3","16n",0.9],["4:0:2","E3","16n",0.9],["4:0:3","A3","16n",0.95],["4:1:0","C4","16n",0.95],["4:1:1","E4","16n",0.95],["4:1:2","A4","16n",0.95],["4:1:3","C5","16n",1],["4:2:0","E5","16n",1],["4:2:1","G5","16n",0.95],["4:2:2","A5","16n",0.95],["4:2:3","G5","16n",0.9],["4:3:0","F5","16n",0.85],["4:3:1","E5","16n",0.85],["4:3:2","D5","16n",0.85],["4:3:3","C5","16n",0.85],["5:0:0","B4","8n",0.85],["5:1:0","A4","8n",0.85],["5:2:0","G#4","8n",0.85],["5:3:0","G4","8n",0.85],["6:0:0","F#4","4n",0.85],["6:2:0","F4","4n",0.85],["7:0:0","E4","1n",0.85],["7:0:0","A1","1n",0.9]]},{"name":"RUN","mood":"aggro","melody":[["0:0:0","A2","8n",0.9],["0:0:2","C5","8n",0.85],["0:1:0","E5","8n",0.85],["0:1:2","A5","8n",0.95],["0:2:0","E5","8n",0.85],["0:2:2","C5","8n",0.8],["0:3:0","A4","8n",0.8],["0:3:2","G4","8n",0.8],["1:0:0","F2","8n",0.9],["1:0:2","C5","8n",0.85],["1:1:0","F5","8n",0.9],["1:1:2","A5","8n",0.95],["1:2:0","F5","8n",0.85],["1:2:2","C5","8n",0.8],["1:3:0","A4","8n",0.8],["1:3:2","F4","8n",0.8],["2:0:0","G2","8n",0.9],["2:0:2","B4","8n",0.85],["2:1:0","D5","8n",0.85],["2:1:2","G5","8n",0.95],["2:2:0","D5","8n",0.85],["2:2:2","B4","8n",0.8],["2:3:0","G4","8n",0.8],["2:3:2","F4","8n",0.8],["3:0:0","E2","4n",0.9],["3:0:0","B4","8n",0.85],["3:1:0","E5","8n",0.85],["3:2:0","G5","8n",0.9],["3:3:0","B5","8n",0.95],["4:0:0","A2","8n",0.95],["4:0:1","A5","16n",0.95],["4:0:2","G5","8n",0.9],["4:0:3","F5","16n",0.85],["4:1:0","E5","8n",0.85],["4:1:2","D5","8n",0.85],["4:2:0","C5","8n",0.85],["4:2:2","B4","8n",0.85],["4:3:0","A4","8n",0.8],["4:3:2","G4","8n",0.8],["5:0:0","F2","4n",0.9],["5:0:0","F5","8n",0.85],["5:1:0","A5","8n",0.95],["5:2:0","C6","8n",1],["5:3:0","A5","8n",0.9],["6:0:0","G2","4n",0.9],["6:0:0","G5","8n",0.9],["6:2:0","B5","8n",0.95],["7:0:0","A2","1n",0.95],["7:0:0","A5","1n",0.95]]},{"name":"FRACTURE","mood":"aggro","melody":[["0:0:0","A1","8n",1],["0:0:2","F#5","16n",1],["0:1:0","A4","16n",0.9],["0:1:1","C#5","16n",0.9],["0:1:2","E5","16n",0.95],["0:1:3","G#5","16n",0.95],["0:2:0","A1","16n",0.9],["0:2:2","B5","16n",1],["0:3:0","G5","16n",0.85],["0:3:1","F5","16n",0.85],["0:3:2","E5","16n",0.85],["0:3:3","D#5","16n",0.85],["1:0:0","D2","8n",0.95],["1:0:2","D5","16n",0.95],["1:1:0","F#5","16n",0.9],["1:1:2","A5","16n",1],["1:2:0","C6","16n",1],["1:2:2","A5","16n",0.9],["1:3:0","F#5","16n",0.85],["1:3:2","D5","16n",0.85],["2:0:0","F2","8n",0.95],["2:0:2","F5","16n",0.9],["2:1:0","G#5","16n",0.95],["2:1:2","C6","16n",1],["2:2:0","D#6","8n",1],["2:3:0","C6","16n",0.9],["2:3:2","G#5","16n",0.85],["3:0:0","E2","8n",0.95],["3:0:2","E5","16n",0.95],["3:1:0","G#5","16n",0.9],["3:1:2","B5","16n",0.95],["3:2:0","E6","8n",1],["3:3:0","B5","16n",0.9],["3:3:2","G#5","16n",0.85],["4:0:0","A1","16n",1],["4:0:1","A4","16n",0.9],["4:0:2","C5","16n",0.9],["4:0:3","E5","16n",0.95],["4:1:0","A5","16n",1],["4:1:1","G5","16n",0.9],["4:1:2","F5","16n",0.85],["4:1:3","E5","16n",0.85],["4:2:0","F2","16n",0.95],["4:2:1","F5","16n",0.9],["4:2:2","G#5","16n",0.95],["4:2:3","C6","16n",1],["4:3:0","D#6","16n",1],["4:3:1","C6","16n",0.9],["4:3:2","G#5","16n",0.85],["4:3:3","F5","16n",0.85],["5:0:0","G#1","8n",1],["5:0:2","G#5","16n",0.95],["5:1:0","C6","16n",0.95],["5:1:2","D#6","16n",1],["5:2:0","F6","8n",1],["5:3:0","D#6","16n",0.9],["5:3:2","C6","16n",0.85],["6:0:0","A1","4n",1],["6:0:0","A5","16n",0.95],["6:0:2","F5","16n",0.9],["6:1:0","D5","16n",0.85],["6:1:2","A4","16n",0.85],["6:2:0","E5","8n",0.85],["6:3:0","C5","8n",0.85],["7:0:0","A1","1n",1],["7:0:0","A4","1n",0.95]]},{"name":"HAMMER","mood":"aggro","melody":[["0:0:0","A1","4n",1],["0:0:0","A2","4n",0.95],["0:1:0","A1","4n",0.9],["0:1:0","E5","4n",0.9],["0:2:0","A1","4n",0.95],["0:2:0","A4","4n",0.85],["0:3:0","A1","4n",0.9],["0:3:0","C5","4n",0.85],["1:0:0","F1","4n",1],["1:0:0","F2","4n",0.95],["1:1:0","F1","4n",0.9],["1:1:0","C5","4n",0.9],["1:2:0","F1","4n",0.95],["1:2:0","F4","4n",0.85],["1:3:0","F1","4n",0.9],["1:3:0","A4","4n",0.85],["2:0:0","G1","4n",1],["2:0:0","G2","4n",0.95],["2:1:0","G1","4n",0.9],["2:1:0","D5","4n",0.9],["2:2:0","G1","4n",0.95],["2:2:0","G4","4n",0.85],["2:3:0","G1","4n",0.9],["2:3:0","B4","4n",0.85],["3:0:0","E1","4n",1],["3:0:0","E2","4n",0.95],["3:1:0","E1","4n",0.9],["3:1:0","B4","4n",0.9],["3:2:0","E1","4n",0.95],["3:2:0","E5","4n",0.9],["3:3:0","E1","4n",0.95],["3:3:0","G5","4n",0.95],["4:0:0","A1","8n",1],["4:0:2","A1","8n",0.95],["4:1:0","A1","8n",0.9],["4:1:2","A1","8n",0.85],["4:2:0","A1","4n",0.95],["4:2:0","A5","4n",1],["4:3:0","A1","4n",0.9],["4:3:0","C6","4n",0.95],["5:0:0","F1","8n",1],["5:0:2","F1","8n",0.95],["5:1:0","F1","4n",0.9],["5:2:0","F1","4n",0.95],["5:2:0","F5","4n",0.95],["5:3:0","F1","4n",0.9],["6:0:0","G1","4n",1],["6:0:0","D6","4n",1],["6:1:0","G1","4n",0.9],["6:2:0","E1","4n",1],["6:2:0","E6","4n",1],["6:3:0","E1","4n",0.9],["7:0:0","A1","1n",1],["7:0:0","A2","1n",1],["7:0:0","A5","1n",1]]},{"name":"SCREAM","mood":"aggro","melody":[["0:0:0","A1","16n",1],["0:0:1","F6","16n",1],["0:0:2","F#6","16n",1],["0:0:3","G6","16n",1],["0:1:0","G#6","16n",1],["0:1:1","G6","16n",0.95],["0:1:2","F#6","16n",0.95],["0:1:3","F6","16n",0.9],["0:2:0","E6","8n",1],["0:3:0","F6","8n",1],["1:0:0","G1","16n",1],["1:0:1","G6","16n",1],["1:0:2","G#6","16n",1],["1:0:3","A6","16n",1],["1:1:0","A#6","16n",1],["1:1:1","A6","16n",0.95],["1:1:2","G#6","16n",0.95],["1:1:3","G6","16n",0.9],["1:2:0","F#6","8n",1],["1:3:0","G6","8n",1],["2:0:0","F1","16n",1],["2:0:1","F6","16n",1],["2:0:2","G6","16n",1],["2:0:3","G#6","16n",1],["2:1:0","A6","8n",1],["2:2:0","G6","8n",1],["2:3:0","F6","8n",0.95],["3:0:0","E1","16n",1],["3:0:1","E6","16n",1],["3:0:2","F6","16n",1],["3:0:3","F#6","16n",1],["3:1:0","G6","8n",1],["3:2:0","F#6","8n",0.95],["3:3:0","F6","8n",0.9],["4:0:0","A1","16n",1],["4:0:1","F6","16n",1],["4:0:2","G#6","16n",1],["4:0:3","B6","16n",1],["4:1:0","C7","16n",1],["4:1:1","B6","16n",0.95],["4:1:2","G#6","16n",0.95],["4:1:3","F6","16n",0.9],["4:2:0","E6","4n",1],["4:3:0","F6","8n",1],["4:3:2","G6","8n",1],["5:0:0","G1","16n",1],["5:0:1","G6","16n",1],["5:0:2","A#6","16n",1],["5:0:3","C7","16n",1],["5:1:0","C#7","8n",1],["5:2:0","C7","8n",0.95],["5:3:0","A#6","8n",0.9],["6:0:0","F1","8n",1],["6:0:2","F6","8n",1],["6:1:0","G#6","8n",1],["6:2:0","B6","4n",1],["7:0:0","A1","1n",1],["7:0:0","A6","1n",1]]},{"name":"CONVULSION","mood":"aggro","melody":[["0:0:0","A1","32n",1],["0:0:1","C#5","32n",0.95],["0:0:2","F5","32n",0.95],["0:0:3","A5","32n",0.95],["0:1:0","C#5","16n",0.95],["0:1:2","G5","16n",0.95],["0:2:0","B4","16n",0.9],["0:2:2","F5","16n",0.9],["0:3:0","A4","16n",0.85],["0:3:2","E5","16n",0.85],["1:0:0","F1","32n",1],["1:0:1","F5","32n",0.95],["1:0:2","G#5","32n",0.95],["1:0:3","C6","32n",0.95],["1:1:0","F5","16n",0.9],["1:1:2","C6","16n",0.95],["1:2:0","D#5","16n",0.85],["1:2:2","A5","16n",0.9],["1:3:0","C5","16n",0.85],["1:3:2","F5","16n",0.85],["2:0:0","G1","32n",1],["2:0:1","B4","32n",0.95],["2:0:2","D5","32n",0.9],["2:0:3","G5","32n",0.95],["2:1:0","B4","16n",0.85],["2:1:2","D5","16n",0.85],["2:2:0","G5","16n",0.9],["2:2:2","B5","16n",0.95],["2:3:0","G5","16n",0.85],["2:3:2","D5","16n",0.8],["3:0:0","E1","32n",1],["3:0:1","E5","32n",0.95],["3:0:2","G5","32n",0.9],["3:0:3","B5","32n",0.95],["3:1:0","E5","16n",0.85],["3:1:2","G5","16n",0.85],["3:2:0","B5","16n",0.9],["3:2:2","E6","16n",1],["3:3:0","B5","16n",0.85],["3:3:2","G5","16n",0.8],["4:0:0","A1","16n",1],["4:0:2","A5","16n",0.95],["4:1:0","C#6","16n",0.95],["4:1:2","E6","16n",1],["4:2:0","F6","8n",1],["4:3:0","E6","8n",0.95],["5:0:0","F1","16n",1],["5:0:2","F6","16n",1],["5:1:0","G#6","16n",0.95],["5:1:2","C7","16n",1],["5:2:0","D#7","8n",1],["5:3:0","C7","8n",0.95],["6:0:0","G1","8n",1],["6:0:2","G6","16n",0.95],["6:1:0","B6","16n",0.95],["6:2:0","D7","8n",1],["6:3:0","B6","8n",0.95],["7:0:0","A1","1n",1],["7:0:0","A6","1n",1]]},{"name":"STORM","mood":"aggro","melody":[["0:0:0","A1","16n",1],["0:0:1","A4","16n",0.9],["0:0:2","C5","16n",0.9],["0:0:3","E5","16n",0.95],["0:1:0","G5","16n",1],["0:1:1","A5","16n",1],["0:1:2","G5","16n",0.9],["0:1:3","F5","16n",0.85],["0:2:0","E5","16n",0.9],["0:2:1","D5","16n",0.85],["0:2:2","C5","16n",0.85],["0:2:3","B4","16n",0.85],["0:3:0","A4","16n",0.85],["0:3:1","G4","16n",0.8],["0:3:2","F4","16n",0.85],["0:3:3","E4","16n",0.85],["1:0:0","F1","16n",1],["1:0:1","F4","16n",0.9],["1:0:2","A4","16n",0.9],["1:0:3","C5","16n",0.95],["1:1:0","F5","16n",1],["1:1:1","G5","16n",1],["1:1:2","A5","16n",1],["1:1:3","G5","16n",0.9],["1:2:0","F5","16n",0.9],["1:2:1","E5","16n",0.85],["1:2:2","D5","16n",0.85],["1:2:3","C5","16n",0.85],["1:3:0","B4","16n",0.85],["1:3:1","A4","16n",0.8],["1:3:2","G4","16n",0.8],["1:3:3","F4","16n",0.8],["2:0:0","G1","16n",1],["2:0:1","G4","16n",0.9],["2:0:2","B4","16n",0.9],["2:0:3","D5","16n",0.95],["2:1:0","G5","16n",1],["2:1:1","B5","16n",1],["2:1:2","G5","16n",0.9],["2:1:3","D5","16n",0.85],["2:2:0","B4","16n",0.9],["2:2:1","D5","16n",0.85],["2:2:2","G5","16n",0.85],["2:2:3","F5","16n",0.85],["2:3:0","E5","16n",0.85],["2:3:1","D5","16n",0.8],["2:3:2","C5","16n",0.8],["2:3:3","B4","16n",0.8],["3:0:0","E1","16n",1],["3:0:1","B4","16n",0.9],["3:0:2","E5","16n",0.9],["3:0:3","G5","16n",0.95],["3:1:0","B5","16n",1],["3:1:1","E6","16n",1],["3:1:2","B5","16n",0.9],["3:1:3","G5","16n",0.85],["3:2:0","F#5","8n",0.85],["3:3:0","F5","8n",0.85],["4:0:0","A1","8n",1],["4:0:2","A5","8n",1],["4:1:0","C6","8n",1],["4:1:2","E6","8n",1],["4:2:0","G6","4n",1],["4:3:0","E6","4n",0.95],["5:0:0","F1","8n",1],["5:0:2","F6","8n",1],["5:1:0","A6","8n",1],["5:1:2","C7","8n",1],["5:2:0","F6","4n",0.95],["5:3:0","C6","4n",0.9],["6:0:0","G1","8n",1],["6:0:2","G5","8n",0.95],["6:1:0","B5","8n",0.95],["6:1:2","D6","8n",1],["6:2:0","G6","4n",1],["6:3:0","B6","4n",1],["7:0:0","A1","1n",1],["7:0:0","A6","1n",1]]},{"name":"UNDERTOW","mood":"calm","melody":[["0:0:0","A2","1n",0.5],["0:0:0","E4","1n",0.55],["0:0:0","A4","1n",0.45],["1:0:0","G2","1n",0.5],["1:0:0","E4","1n",0.55],["1:2:0","D4","2n",0.45],["2:0:0","F2","1n",0.5],["2:0:0","C4","1n",0.55],["2:2:0","E4","2n",0.5],["3:0:0","E2","1n",0.52],["3:0:0","B3","2n",0.55],["3:2:0","E4","2n",0.5],["4:0:0","D2","1n",0.5],["4:0:0","A3","1n",0.55],["4:2:0","D4","2n",0.48],["5:0:0","C2","1n",0.5],["5:0:0","G3","1n",0.55],["5:2:0","C4","2n",0.5],["6:0:0","B2","1n",0.52],["6:0:0","F4","2n",0.58],["6:2:0","E4","2n",0.5],["7:0:0","A2","1n",0.55],["7:0:0","E4","1n",0.55],["7:0:0","A4","1n",0.45]]},{"name":"GLASSWATER","mood":"calm","melody":[["0:0:0","D2","1n",0.42],["0:2:0","A5","2n",0.55],["1:1:0","F5","2n",0.45],["2:0:0","B2","1n",0.42],["2:2:0","D5","2n",0.5],["3:1:0","E5","2n",0.48],["4:0:0","G2","1n",0.42],["4:2:0","B4","2n",0.52],["5:1:0","D5","2n",0.46],["6:0:0","A2","1n",0.45],["6:2:0","A5","2n",0.58],["7:0:0","E5","1n",0.42]]},{"name":"SALTMARSH","mood":"calm","melody":[["0:0:0","A2","1n",0.48],["0:0:0","C5","4n",0.5],["0:1:0","E5","4n",0.45],["0:2:0","C5","4n",0.48],["0:3:0","E5","4n",0.44],["1:0:0","F2","1n",0.48],["1:0:0","C5","4n",0.5],["1:1:0","E5","4n",0.45],["1:2:0","C5","4n",0.48],["1:3:0","F5","4n",0.5],["2:0:0","D2","1n",0.48],["2:0:0","D5","4n",0.5],["2:1:0","F5","4n",0.45],["2:2:0","D5","4n",0.48],["2:3:0","A4","4n",0.44],["3:0:0","E2","1n",0.5],["3:0:0","B4","4n",0.5],["3:1:0","E5","4n",0.48],["3:2:0","B4","4n",0.46],["3:3:0","G4","4n",0.44],["4:0:0","A2","1n",0.48],["4:0:0","C5","4n",0.5],["4:1:0","E5","4n",0.45],["4:2:0","C5","4n",0.48],["4:3:0","E5","4n",0.44],["5:0:0","F2","1n",0.48],["5:0:0","A4","4n",0.5],["5:1:0","C5","4n",0.45],["5:2:0","F5","4n",0.52],["5:3:0","C5","4n",0.46],["6:0:0","G2","1n",0.48],["6:0:0","B4","4n",0.5],["6:1:0","D5","4n",0.46],["6:2:0","G5","4n",0.54],["6:3:0","D5","4n",0.46],["7:0:0","A2","1n",0.52],["7:0:0","C5","1n",0.52],["7:0:0","A4","1n",0.44]]},{"name":"LANTERN","mood":"calm","melody":[["0:0:0","A2","1n",0.48],["0:0:0","E5","4n",0.55],["0:1:0","A5","4n",0.5],["0:2:0","E5","2n",0.45],["1:0:0","F2","1n",0.48],["1:0:0","E5","4n",0.52],["1:1:0","A5","4n",0.5],["1:2:0","E5","2n",0.45],["2:0:0","C2","1n",0.48],["2:0:0","E5","4n",0.52],["2:1:0","A5","4n",0.5],["2:2:0","E5","2n",0.45],["3:0:0","G2","1n",0.5],["3:0:0","E5","4n",0.55],["3:1:0","B5","4n",0.55],["3:2:0","G5","2n",0.48],["4:0:0","D2","1n",0.48],["4:0:0","F5","4n",0.52],["4:1:0","A5","4n",0.5],["4:2:0","D5","2n",0.45],["5:0:0","E2","1n",0.5],["5:0:0","E5","4n",0.52],["5:1:0","B5","4n",0.52],["5:2:0","E5","2n",0.46],["6:0:0","F2","1n",0.48],["6:0:0","F5","4n",0.55],["6:1:0","C6","4n",0.55],["6:2:0","A5","2n",0.48],["7:0:0","A2","1n",0.52],["7:0:0","E5","1n",0.52],["7:0:0","A5","1n",0.46]]},{"name":"NOCTURNE","mood":"calm","melody":[["0:0:0","A2","4n",0.46],["0:1:0","E3","4n",0.38],["0:2:0","A3","4n",0.36],["0:3:0","C4","4n",0.34],["0:0:0","E5","2n.",0.58],["0:3:0","D5","4n",0.48],["1:0:0","F2","4n",0.46],["1:1:0","C3","4n",0.38],["1:2:0","F3","4n",0.36],["1:3:0","A3","4n",0.34],["1:0:0","C5","2n",0.55],["1:2:0","A4","2n",0.48],["2:0:0","D2","4n",0.46],["2:1:0","A2","4n",0.38],["2:2:0","D3","4n",0.36],["2:3:0","F3","4n",0.34],["2:0:0","D5","2n.",0.58],["2:3:0","F5","4n",0.52],["3:0:0","E2","4n",0.48],["3:1:0","B2","4n",0.38],["3:2:0","E3","4n",0.36],["3:3:0","G3","4n",0.34],["3:0:0","E5","1n",0.55],["4:0:0","A2","4n",0.46],["4:1:0","E3","4n",0.38],["4:2:0","A3","4n",0.36],["4:3:0","C4","4n",0.34],["4:0:0","A5","2n",0.6],["4:2:0","G5","2n",0.52],["5:0:0","F2","4n",0.46],["5:1:0","C3","4n",0.38],["5:2:0","F3","4n",0.36],["5:3:0","A3","4n",0.34],["5:0:0","F5","2n",0.55],["5:2:0","E5","2n",0.48],["6:0:0","G2","4n",0.46],["6:1:0","D3","4n",0.38],["6:2:0","G3","4n",0.36],["6:3:0","B3","4n",0.34],["6:0:0","D5","2n",0.52],["6:2:0","B4","2n",0.46],["7:0:0","A2","1n",0.5],["7:0:0","A4","1n",0.5],["7:0:0","E5","1n",0.44]]},{"name":"STILLWATER","mood":"calm","melody":[["0:0:0","A2","1n",0.45],["0:0:0","A3","1n",0.45],["0:0:0","C4","1n",0.42],["0:0:0","E4","1n",0.4],["2:0:0","F2","1n",0.45],["2:0:0","A3","1n",0.45],["2:0:0","C4","1n",0.42],["2:0:0","F4","1n",0.42],["4:0:0","D2","1n",0.45],["4:0:0","A3","1n",0.45],["4:0:0","D4","1n",0.42],["4:0:0","F4","1n",0.4],["6:0:0","E2","1n",0.48],["6:0:0","B3","1n",0.45],["6:0:0","E4","1n",0.42],["6:0:0","G4","1n",0.42],["1:2:0","E5","2n",0.38],["3:2:0","C5","2n",0.38],["5:2:0","D5","2n",0.38],["7:2:0","B4","2n",0.36]]},{"name":"RIPTIDE","mood":"aggro","melody":[["0:0:0","A2","4n",1],["0:0:0","A3","16n",0.85],["0:0:1","C4","16n",0.85],["0:0:2","E4","16n",0.9],["0:0:3","A4","16n",0.95],["0:1:0","C5","16n",1],["0:1:1","E5","16n",1],["0:1:2","C5","16n",0.85],["0:1:3","A4","16n",0.8],["0:2:0","E4","16n",0.85],["0:2:2","C4","16n",0.8],["0:3:0","A3","8n",0.85],["1:0:0","F2","4n",1],["1:0:0","F3","16n",0.85],["1:0:1","A3","16n",0.85],["1:0:2","C4","16n",0.9],["1:0:3","F4","16n",0.95],["1:1:0","A4","16n",1],["1:1:1","C5","16n",1],["1:1:2","A4","16n",0.85],["1:1:3","F4","16n",0.8],["1:2:0","C4","16n",0.85],["1:2:2","A3","16n",0.8],["1:3:0","F3","8n",0.85],["2:0:0","G2","4n",1],["2:0:0","G3","16n",0.85],["2:0:1","B3","16n",0.85],["2:0:2","D4","16n",0.9],["2:0:3","G4","16n",0.95],["2:1:0","B4","16n",1],["2:1:1","D5","16n",1],["2:1:2","B4","16n",0.85],["2:1:3","G4","16n",0.8],["2:2:0","D4","16n",0.85],["2:2:2","B3","16n",0.8],["2:3:0","G3","8n",0.85],["3:0:0","E2","4n",1],["3:0:0","E4","16n",0.9],["3:0:1","G4","16n",0.9],["3:0:2","B4","16n",0.95],["3:0:3","E5","16n",1],["3:1:0","G5","16n",1],["3:1:1","E5","16n",0.9],["3:1:2","B4","16n",0.85],["3:1:3","G4","16n",0.8],["3:2:0","E4","2n",0.9],["4:0:0","A2","4n",1],["4:0:0","A3","16n",0.85],["4:0:1","C4","16n",0.85],["4:0:2","E4","16n",0.9],["4:0:3","A4","16n",0.95],["4:1:0","C5","16n",1],["4:1:1","E5","16n",1],["4:1:2","A5","16n",1],["4:1:3","E5","16n",0.9],["4:2:0","C5","16n",0.85],["4:2:2","A4","16n",0.85],["4:3:0","E4","8n",0.85],["5:0:0","F2","4n",1],["5:0:0","F4","16n",0.9],["5:0:1","A4","16n",0.9],["5:0:2","C5","16n",0.95],["5:0:3","F5","16n",1],["5:1:0","A5","16n",1],["5:1:1","F5","16n",0.9],["5:1:2","C5","16n",0.85],["5:1:3","A4","16n",0.8],["5:2:0","F4","2n",0.88],["6:0:0","D2","4n",1],["6:0:0","D4","16n",0.9],["6:0:1","F4","16n",0.9],["6:0:2","A4","16n",0.95],["6:0:3","D5","16n",1],["6:1:0","F5","16n",1],["6:1:1","A5","16n",1],["6:1:2","F5","16n",0.9],["6:1:3","D5","16n",0.85],["6:2:0","A4","16n",0.85],["6:2:2","F4","16n",0.8],["6:3:0","D4","8n",0.85],["7:0:0","A2","1n",1],["7:0:0","A2","1n",0.95],["7:0:0","E4","1n",0.85],["7:0:0","A4","1n",0.85]]},{"name":"ANVIL","mood":"aggro","melody":[["0:0:0","A2","8n",1],["0:0:2","A2","8n",0.85],["0:1:0","A2","8n",0.95],["0:1:2","A2","8n",0.8],["0:2:0","A2","8n",1],["0:2:2","A2","8n",0.85],["0:3:0","A2","8n",0.95],["0:3:2","A2","8n",0.8],["0:0:0","A4","2n",0.9],["0:2:0","C5","2n",0.85],["1:0:0","A2","8n",1],["1:0:2","A2","8n",0.85],["1:1:0","A2","8n",0.95],["1:1:2","A2","8n",0.8],["1:2:0","A2","8n",1],["1:2:2","A2","8n",0.85],["1:3:0","A2","8n",0.95],["1:3:2","A2","8n",0.8],["1:0:0","E5","2n",0.95],["1:2:0","C5","2n",0.85],["2:0:0","F2","8n",1],["2:0:2","F2","8n",0.85],["2:1:0","F2","8n",0.95],["2:1:2","F2","8n",0.8],["2:2:0","F2","8n",1],["2:2:2","F2","8n",0.85],["2:3:0","F2","8n",0.95],["2:3:2","F2","8n",0.8],["2:0:0","F4","2n",0.9],["2:2:0","A4","2n",0.85],["3:0:0","F2","8n",1],["3:0:2","F2","8n",0.85],["3:1:0","F2","8n",0.95],["3:1:2","F2","8n",0.8],["3:2:0","F2","8n",1],["3:2:2","F2","8n",0.85],["3:3:0","F2","8n",0.95],["3:3:2","F2","8n",0.8],["3:0:0","C5","2n",0.95],["3:2:0","A4","2n",0.85],["4:0:0","G2","8n",1],["4:0:2","G2","8n",0.85],["4:1:0","G2","8n",0.95],["4:1:2","G2","8n",0.8],["4:2:0","G2","8n",1],["4:2:2","G2","8n",0.85],["4:3:0","G2","8n",0.95],["4:3:2","G2","8n",0.8],["4:0:0","G4","2n",0.9],["4:2:0","B4","2n",0.85],["5:0:0","G2","8n",1],["5:0:2","G2","8n",0.85],["5:1:0","G2","8n",0.95],["5:1:2","G2","8n",0.8],["5:2:0","G2","8n",1],["5:2:2","G2","8n",0.85],["5:3:0","G2","8n",0.95],["5:3:2","G2","8n",0.8],["5:0:0","D5","2n",0.95],["5:2:0","B4","2n",0.85],["6:0:0","E2","8n",1],["6:0:2","E2","8n",0.9],["6:1:0","E2","8n",1],["6:1:2","E2","8n",0.9],["6:2:0","E2","8n",1],["6:2:2","E2","8n",0.9],["6:3:0","E2","8n",1],["6:3:2","E2","8n",0.9],["6:0:0","E5","2n",1],["6:2:0","G5","2n",0.95],["7:0:0","A2","1n",1],["7:0:0","A2","1n",0.95],["7:0:0","A4","1n",0.9],["7:0:0","E5","1n",0.9]]},{"name":"SQUALL","mood":"aggro","melody":[["0:0:0","A2","4n",1],["0:0:0","A4","16n",0.95],["0:0:1","C5","16n",0.95],["0:0:2","E5","16n",1],["0:0:3","A5","16n",1],["0:1:0","E5","16n",0.85],["0:1:1","C5","16n",0.8],["1:0:0","A2","4n",0.9],["1:0:0","C5","16n",0.9],["1:0:1","E5","16n",0.9],["1:0:2","A5","16n",0.95],["1:1:0","G5","16n",0.85],["1:1:1","E5","16n",0.8],["2:0:0","F2","4n",1],["2:0:0","F4","16n",0.95],["2:0:1","A4","16n",0.95],["2:0:2","C5","16n",1],["2:0:3","F5","16n",1],["2:1:0","C5","16n",0.85],["2:1:1","A4","16n",0.8],["3:0:0","F2","4n",0.9],["3:0:0","A4","16n",0.9],["3:0:1","C5","16n",0.9],["3:0:2","F5","16n",0.95],["3:1:0","E5","16n",0.85],["3:1:1","C5","16n",0.8],["4:0:0","D2","4n",1],["4:0:0","D4","16n",0.95],["4:0:1","F4","16n",0.95],["4:0:2","A4","16n",1],["4:0:3","D5","16n",1],["4:1:0","A4","16n",0.85],["4:1:1","F4","16n",0.8],["5:0:0","D2","4n",0.9],["5:0:0","F5","16n",0.95],["5:0:1","A5","16n",1],["5:0:2","D6","16n",1],["5:1:0","A5","16n",0.85],["5:1:1","F5","16n",0.8],["6:0:0","E2","4n",1],["6:0:0","E4","16n",0.95],["6:0:1","G4","16n",0.95],["6:0:2","B4","16n",1],["6:0:3","E5","16n",1],["6:1:0","G5","16n",1],["6:1:1","B5","16n",1],["6:1:2","E6","16n",1],["7:0:0","A2","1n",1],["7:0:0","A2","1n",0.95],["7:0:0","A4","1n",0.9]]},{"name":"UNDERCUT","mood":"aggro","melody":[["0:0:0","A2","4n",1],["0:1:0","A2","4n",0.75],["0:2:0","A2","4n",0.85],["0:3:0","A2","4n",0.75],["0:0:3","A3","16n",0.9],["0:1:2","C4","16n",0.85],["0:2:3","E4","16n",0.9],["0:3:1","A4","16n",0.85],["1:0:0","A2","4n",1],["1:1:0","A2","4n",0.75],["1:2:0","A2","4n",0.85],["1:3:0","A2","4n",0.75],["1:0:3","E4","16n",0.9],["1:1:2","A4","16n",0.9],["1:2:3","C5","16n",0.95],["1:3:1","A4","16n",0.85],["2:0:0","F2","4n",1],["2:1:0","F2","4n",0.75],["2:2:0","F2","4n",0.85],["2:3:0","F2","4n",0.75],["2:0:3","F3","16n",0.9],["2:1:2","A3","16n",0.85],["2:2:3","C4","16n",0.9],["2:3:1","F4","16n",0.85],["3:0:0","F2","4n",1],["3:1:0","F2","4n",0.75],["3:2:0","F2","4n",0.85],["3:3:0","F2","4n",0.75],["3:0:3","C4","16n",0.9],["3:1:2","F4","16n",0.9],["3:2:3","A4","16n",0.95],["3:3:1","F4","16n",0.85],["4:0:0","G2","4n",1],["4:1:0","G2","4n",0.75],["4:2:0","G2","4n",0.85],["4:3:0","G2","4n",0.75],["4:0:3","G3","16n",0.9],["4:1:2","B3","16n",0.85],["4:2:3","D4","16n",0.9],["4:3:1","G4","16n",0.85],["5:0:0","G2","4n",1],["5:1:0","G2","4n",0.75],["5:2:0","G2","4n",0.85],["5:3:0","G2","4n",0.75],["5:0:3","D4","16n",0.9],["5:1:2","G4","16n",0.9],["5:2:3","B4","16n",0.95],["5:3:1","G4","16n",0.85],["6:0:0","E2","4n",1],["6:1:0","E2","4n",0.85],["6:2:0","E2","4n",0.95],["6:3:0","E2","4n",0.85],["6:0:3","E4","16n",0.95],["6:1:2","G4","16n",0.9],["6:2:3","B4","16n",1],["6:3:1","E5","16n",1],["7:0:0","A2","1n",1],["7:0:0","A2","1n",0.9],["7:0:0","A4","1n",0.85],["7:0:0","C5","1n",0.85]]},{"name":"VORTEX","mood":"aggro","melody":[["0:0:0","A2","2n",1],["0:0:0","A5","16n",0.95],["0:0:1","G5","16n",0.9],["0:0:2","F5","16n",0.9],["0:0:3","E5","16n",0.9],["0:1:0","D5","16n",0.85],["0:1:1","C5","16n",0.85],["0:1:2","B4","16n",0.85],["0:1:3","A4","16n",0.85],["0:2:0","A2","2n",0.85],["0:2:0","E5","8n",0.9],["0:2:2","C5","8n",0.85],["0:3:0","A4","8n",0.85],["0:3:2","E4","8n",0.85],["1:0:0","G2","2n",1],["1:0:0","G5","16n",0.95],["1:0:1","F5","16n",0.9],["1:0:2","E5","16n",0.9],["1:0:3","D5","16n",0.9],["1:1:0","C5","16n",0.85],["1:1:1","B4","16n",0.85],["1:1:2","A4","16n",0.85],["1:1:3","G4","16n",0.85],["1:2:0","G2","2n",0.85],["1:2:0","D5","8n",0.9],["1:2:2","B4","8n",0.85],["1:3:0","G4","8n",0.85],["1:3:2","D4","8n",0.85],["2:0:0","F2","2n",1],["2:0:0","F5","16n",0.95],["2:0:1","E5","16n",0.9],["2:0:2","D5","16n",0.9],["2:0:3","C5","16n",0.9],["2:1:0","B4","16n",0.85],["2:1:1","A4","16n",0.85],["2:1:2","G4","16n",0.85],["2:1:3","F4","16n",0.85],["2:2:0","F2","2n",0.85],["2:2:0","C5","8n",0.9],["2:2:2","A4","8n",0.85],["2:3:0","F4","8n",0.85],["2:3:2","C4","8n",0.85],["3:0:0","E2","1n",1],["3:0:0","E5","16n",1],["3:0:1","D5","16n",0.95],["3:0:2","C5","16n",0.95],["3:0:3","B4","16n",0.9],["3:1:0","A4","16n",0.9],["3:1:1","G4","16n",0.9],["3:1:2","F4","16n",0.9],["3:1:3","E4","16n",0.9],["3:2:0","B4","8n",0.9],["3:2:2","E4","8n",0.9],["3:3:0","E5","2n",0.95],["4:0:0","A2","2n",1],["4:0:0","A5","16n",0.95],["4:0:1","G5","16n",0.9],["4:0:2","F5","16n",0.9],["4:0:3","E5","16n",0.9],["4:1:0","D5","16n",0.85],["4:1:1","C5","16n",0.85],["4:1:2","B4","16n",0.85],["4:1:3","A4","16n",0.85],["4:2:0","A2","2n",0.85],["4:2:0","C5","8n",0.9],["4:2:2","A4","8n",0.85],["4:3:0","E4","8n",0.85],["4:3:2","A3","8n",0.85],["5:0:0","F2","2n",1],["5:0:0","C6","16n",1],["5:0:1","A5","16n",0.95],["5:0:2","F5","16n",0.9],["5:0:3","C5","16n",0.9],["5:1:0","A4","16n",0.85],["5:1:1","F4","16n",0.85],["5:1:2","C4","16n",0.85],["5:1:3","A3","16n",0.85],["5:2:0","F2","2n",0.85],["5:2:0","F4","2n",0.88],["6:0:0","D2","2n",1],["6:0:0","D6","16n",1],["6:0:1","C6","16n",0.95],["6:0:2","A5","16n",0.95],["6:0:3","F5","16n",0.9],["6:1:0","D5","16n",0.9],["6:1:1","A4","16n",0.9],["6:1:2","F4","16n",0.9],["6:1:3","D4","16n",0.9],["6:2:0","D2","2n",0.9],["6:2:0","A4","2n",0.9],["7:0:0","A2","1n",1],["7:0:0","A2","1n",0.95],["7:0:0","A4","1n",0.9],["7:0:0","A5","1n",0.9]]},{"name":"BREAKWATER","mood":"aggro","melody":[["0:0:0","A2","2n",1],["0:0:0","A3","2n",0.9],["0:0:0","C4","2n",0.9],["0:0:0","E4","2n",0.9],["0:0:0","A4","2n",0.95],["0:2:0","A2","2n",0.9],["0:2:0","A3","2n",0.85],["0:2:0","C4","2n",0.85],["0:2:0","E4","2n",0.85],["1:0:0","F2","2n",1],["1:0:0","F3","2n",0.9],["1:0:0","A3","2n",0.9],["1:0:0","C4","2n",0.9],["1:0:0","F4","2n",0.95],["1:2:0","F2","2n",0.9],["1:2:0","F3","2n",0.85],["1:2:0","A3","2n",0.85],["1:2:0","C4","2n",0.85],["2:0:0","G2","2n",1],["2:0:0","G3","2n",0.9],["2:0:0","B3","2n",0.9],["2:0:0","D4","2n",0.9],["2:0:0","G4","2n",0.95],["2:2:0","G2","2n",0.9],["2:2:0","G3","2n",0.85],["2:2:0","B3","2n",0.85],["2:2:0","D4","2n",0.85],["3:0:0","E2","1n",1],["3:0:0","E3","1n",0.95],["3:0:0","G3","1n",0.95],["3:0:0","B3","1n",0.95],["3:0:0","E4","1n",1],["4:0:0","A2","2n",1],["4:0:0","A3","2n",0.9],["4:0:0","C4","2n",0.9],["4:0:0","E4","2n",0.9],["4:0:0","A4","2n",0.95],["4:2:0","C2","2n",0.9],["4:2:0","C4","2n",0.85],["4:2:0","E4","2n",0.85],["4:2:0","G4","2n",0.85],["5:0:0","D2","2n",1],["5:0:0","D3","2n",0.9],["5:0:0","F3","2n",0.9],["5:0:0","A3","2n",0.9],["5:0:0","D4","2n",0.95],["5:2:0","D2","2n",0.9],["5:2:0","F4","2n",0.9],["5:2:0","A4","2n",0.9],["6:0:0","F2","2n",1],["6:0:0","F3","2n",0.95],["6:0:0","A3","2n",0.95],["6:0:0","C4","2n",0.95],["6:0:0","F4","2n",1],["6:2:0","E2","2n",1],["6:2:0","E3","2n",0.95],["6:2:0","G3","2n",0.95],["6:2:0","B3","2n",0.95],["6:2:0","E4","2n",1],["7:0:0","A2","1n",1],["7:0:0","A2","1n",1],["7:0:0","A3","1n",0.95],["7:0:0","C4","1n",0.95],["7:0:0","E4","1n",0.95],["7:0:0","A4","1n",1]]}];
+
+  const TONIC_MIDI  = { A:45, D:50, E:52, C:48, G:55, B:47, "F#":54 };
+  const TONIC_ORDER = ["A","D","E","C","G","B","F#"];
+
+  // canonical order. NEVER reshuffle: the anchor is an index into this.
+  const CATALOG = [];
+  for (let i = 0; i < FIXED.length; i++)
+    CATALOG.push({ name: FIXED[i].name, mood: FIXED[i].mood, melody: FIXED[i].melody, fn: null });
+  let ai = 0;
+  const SETS = [PATS.ARCHETYPES, B1, B2, B3, B4, B5];
+  for (let s = 0; s < SETS.length; s++)
+    for (const k in SETS[s]) {
+      if (typeof SETS[s][k] !== "function") continue;
+      CATALOG.push({ name: k.toUpperCase(), mood: null, melody: null,
+                     fn: SETS[s][k], tonic: TONIC_ORDER[ai % 7] });
+      ai++;
+    }
+  if (CATALOG.length !== POOLS.composition) throw new Error("AM125 catalog " + CATALOG.length);
+  if (CATALOG[6].name !== "WHISPER") throw new Error("AM125 index 6 is " + CATALOG[6].name);
+
+  function picks(hex) {
+    const R = rng(seedOf(hex) * 2654435761 + 12345), out = {};
+    for (let i = 0; i < ORDER.length; i++) {
+      const k = ORDER[i];
+      out[k] = (Math.floor(R() * POOLS[k]) + OFFSETS[k]) % POOLS[k];
+    }
+    return out;
+  }
+
+  // Returns exactly what the site's old deriveParams returned, so nothing
+  // downstream needs to know the engine changed.
+  function derive(hashHex, chaosOverride, schemeOverride, waveOverride) {
+    const hex = (hashHex || "").toLowerCase();
+    const p   = picks(hex);
+    const seed = seedOf(hex);
+
+    const chaos = chaosOverride != null ? chaosOverride : p.chaos + 1;
+    const cmap  = CHAOS_MAP[chaos];
+
+    const entry = CATALOG[p.composition];
+    let motif;
+    // loopBars IS REQUIRED. The site's buildPart reads it to set part.loopEnd;
+    // omit it and loopEnd becomes NaN, the loop never fires, and the piece plays
+    // once into silence. Every composition in this collection is 8 bars.
+    if (entry.melody) {
+      motif = { name: entry.name, mood: entry.mood, loopBars: 8, melody: entry.melody };
+    } else {
+      const built = entry.fn({ R: rng(seed), prog: PATS.PROGS[seed % PATS.PROGS.length],
+                               tonicMidi: TONIC_MIDI[entry.tonic] });
+      motif = { name: entry.name, mood: built.mood, loopBars: 8, melody: built.melody };
+    }
+
+    const voice  = cmap.voiceBias[Math.floor(rng(seed ^ 0x9e37)() * cmap.voiceBias.length)];
+    const scheme = schemeOverride != null ? schemeOverride : SCHEMES[p.palette];
+    const orientation = p.orientation ? "vertical" : "horizontal";
+
+    // wave: drawn AFTER everything anchored, from a pool gated by chaos
+    let waveIdx;
+    if (waveOverride !== null && waveOverride !== undefined) {
+      waveIdx = waveOverride;
+    } else {
+      let moods;
+      if (chaos <= 3)      moods = ["smooth"];
+      else if (chaos <= 5) moods = ["smooth", "mid"];
+      else if (chaos <= 7) moods = ["mid", "harsh"];
+      else                 moods = ["harsh"];
+      const pool = WAVE_PATTERNS.map(function (w, i) { return moods.indexOf(w.mood) >= 0 ? i : -1; })
+                                .filter(function (i) { return i >= 0; });
+      waveIdx = pool[Math.floor(rng(seed ^ 0x5bf0)() * pool.length)];
+    }
+
+    return {
+      chaos: chaos, chaosLabel: CHAOS_LABELS[chaos],
+      motif: motif, voice: voice, scheme: scheme, waveIdx: waveIdx,
+      orientation: orientation, tempo: cmap.tempo, velMul: cmap.velMul,
+      transposeSemis: p.transpose - 5, octaveShift: p.octave - 1
+    };
+  }
+
+  return { derive: derive, CATALOG: CATALOG, picks: picks, SALT: SALT, POOLS: POOLS };
+})();
+
 
 function renderHash(hex) {
   // CANONICAL FORM IS LOWERCASE. Normalise at this single choke point so one
@@ -2109,7 +4370,7 @@ function renderHash(hex) {
   // comes out because the engine says so, and anyone can check that.
   // (composeMotif below is unreleased work for the later drop. Nothing on this
   // site reaches it, deliberately — one engine in public, no versions on show.)
-  const p = deriveParams(hex);
+  const p = AM125.derive(hex);
   p.hash = hex;
   apply(p);
   paintReadout(p);
@@ -2256,7 +4517,7 @@ function rollStrikingHash(min, max, tries) {
   min = min || 6; max = max || 8; tries = tries || 60;
   let h = rollHash();
   for (let i = 0; i < tries; i++) {
-    if (deriveParams(h).chaos >= min && deriveParams(h).chaos <= max) return h;
+    if (AM125.derive(h).chaos >= min && AM125.derive(h).chaos <= max) return h;
     h = rollHash();
   }
   return h;
