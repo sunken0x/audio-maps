@@ -1,0 +1,88 @@
+<!doctype html>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Audio Maps — template 9:5</title>
+<style>
+:root{--bg:#0b0c10;--ink:#dfe3ec;--dim:#7a869e;--hot:#ff6b6b;--line:#1d2434}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);
+ font:13px/1.55 ui-monospace,Menlo,monospace;padding:20px;display:flex;gap:22px;
+ align-items:flex-start;flex-wrap:wrap}
+.panel{width:300px;flex:0 0 300px}
+h1{font-size:13px;letter-spacing:.16em;margin:0 0 3px;font-weight:700}
+.sub{color:var(--dim);font-size:11px;margin-bottom:18px}
+button{width:100%;background:#1b2436;color:var(--ink);border:1px solid var(--line);
+ padding:10px;font:inherit;border-radius:3px;cursor:pointer}
+button:hover{background:#243049}
+button.go{background:var(--hot);color:#0b0c10;font-weight:700;border-color:transparent}
+.two{display:flex;gap:8px;margin-bottom:8px}
+[hidden]{display:none !important}
+#log{margin-top:12px;color:var(--dim);font-size:11px;min-height:32px}
+#card{flex:0 0 auto;align-self:flex-start;width:auto;height:auto;
+ max-width:calc(100vw - 370px);max-height:88vh;
+ box-shadow:0 10px 50px rgba(0,0,0,.65);border-radius:2px}
+.note{color:var(--dim);font-size:10px;line-height:1.7;margin-top:14px;
+ border-top:1px solid var(--line);padding-top:12px}
+@media (max-width:760px){
+  body{padding:14px;gap:14px;flex-direction:column-reverse;justify-content:flex-end}
+  .panel{width:100%;flex:1 1 auto}
+  #card{align-self:center;width:100%;max-width:100%}
+  button{padding:12px;font-size:16px}
+}
+</style>
+
+<div class=panel>
+  <h1>TEMPLATE 9:5</h1>
+  <div class=sub>1800 x 1000. A 30px cream border, the artwork full bleed inside
+  it, the logo centred. Nothing else on the card.</div>
+
+  <select id=tune style="width:100%;background:#131a29;color:var(--ink);
+    border:1px solid var(--line);border-radius:3px;padding:10px;font:inherit;
+    margin-bottom:8px"><option>loading…</option></select>
+
+  <div class=two>
+    <button id=back>&larr;</button>
+    <button id=variant>NEXT VERSION</button>
+    <button class=go id=cycle>CYCLE</button>
+  </div>
+  <div class=two>
+    <button id=play>PLAY</button>
+    <select id=loops style="flex:0 0 84px;background:#131a29;color:var(--ink);
+      border:1px solid var(--line);border-radius:3px;padding:10px;font:inherit">
+      <option value=1>1 loop</option><option value=2>2 loops</option>
+      <option value=3>3 loops</option></select>
+  </div>
+  <div class=two>
+    <button class=go id=rec>RECORD</button>
+    <button id=png>PNG</button>
+  </div>
+
+  <div id=log style="white-space:pre-line">loading…</div>
+  <video id=out controls loop playsinline hidden
+         style="width:100%;margin-top:8px;border-radius:3px;max-height:180px"></video>
+  <div class=two id=saverow hidden style="margin-top:6px">
+    <button class=go id=dl>DOWNLOAD</button>
+    <button id=share hidden>SHARE</button>
+  </div>
+
+  <div class=note>
+    Pick a tune by name from all 125, or CYCLE for a random seed. Up and down
+    step through the catalog in order, left and right walk back through what you
+    have already seen. Space plays and pauses. The seed is printed under the
+    traits, so anything worth keeping can be found again.<br><br>
+    RECORD waits for the top of the loop before it starts, so the clip cuts on
+    the bar and loops seamlessly. MP4 with the music on the same file. Real time,
+    so leave the tab in front.
+  </div>
+</div>
+
+<canvas id=card width=1800 height=1000></canvas>
+
+<!-- Cache-busted on purpose. A stale template.js executed for several edits
+     while the page looked fine, which reads as "my change did nothing" rather
+     than "the browser never fetched it". assets.js is 950KB and never changes,
+     so it is left cacheable. -->
+<script src="assets.js"></script>
+<script>
+  document.write('<script src="template.js?t=' + Date.now() + '"><\/script>');
+</script>
