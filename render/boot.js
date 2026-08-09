@@ -548,12 +548,30 @@ try {
     $("saverow").hidden = false;
     $("dl").onclick = async () => say(await saveTo(blob, name));
 
+    /*  The share carries the post, not just the file. Left to write their own
+     *  caption most people write nothing, and a silent video of lines moving
+     *  explains none of itself. This says what it is, what to do, and where to
+     *  go and get one. */
+    const post =
+      `Every Ethereum wallet has a sound.\n\n` +
+      `This is mine. ${p.motif.name}, ${p.tempo} bpm.\n\n` +
+      `Hear yours: audiomaps.sunken0x.art/render/\n\n` +
+      `Sound on 🔊`;
+
     const file = new File([blob], name, { type: blob.type });
     const canShare = navigator.canShare && navigator.canShare({ files: [file] });
     $("share").hidden = !canShare;
     if (canShare) $("share").onclick = async () => {
-      try { await navigator.share({ files: [file], title: `${COLLECTION} · ${seedLabel}` }); }
+      try { await navigator.share({ files: [file], text: post }); }
       catch (e){ if (e.name !== "AbortError") say("share failed: " + e.message); }
+    };
+    // Desktop has no share sheet, and X cannot be handed a video by a link, so
+    // the caption goes to the clipboard and the video is attached by hand.
+    $("post").hidden = false;
+    $("post").onclick = async () => {
+      try { await navigator.clipboard.writeText(post); } catch (e){}
+      say("caption copied. attach the video in the window that opened.");
+      open("https://twitter.com/intent/tweet?text=" + encodeURIComponent(post), "_blank");
     };
 
     say(`${mb} MB, ${secs.toFixed(1)}s — ready below`);
