@@ -1,0 +1,234 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Soundprints — Audio Maps</title>
+<style>
+  :root{
+    --paper:#edeae3; --ink:#14130f; --dim:#8a877e; --line:#d6d2c8;
+    --mono:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;padding:0;background:var(--paper);color:var(--ink);font-family:var(--mono)}
+  body{-webkit-font-smoothing:antialiased}
+  header{
+    display:flex;align-items:baseline;justify-content:space-between;
+    padding:22px 28px;border-bottom:1px solid var(--line);
+    position:sticky;top:0;background:var(--paper);z-index:5
+  }
+  .brand{font-size:13px;letter-spacing:.34em;font-weight:600}
+  .who{font-size:11px;letter-spacing:.28em;color:var(--dim)}
+  .intro{padding:44px 28px 14px;max-width:760px}
+  h1{font-size:26px;letter-spacing:.16em;margin:0 0 14px;font-weight:600}
+  .blurb{font-size:12.5px;line-height:1.85;color:#3d3a33;margin:0 0 10px}
+  .chain{font-size:11px;color:var(--dim);line-height:1.9;word-break:break-all}
+  .chain a{color:var(--dim)}
+  .count{padding:10px 28px 0;font-size:11px;letter-spacing:.22em;color:var(--dim)}
+  .grid{
+    display:grid;grid-template-columns:repeat(auto-fill,minmax(268px,1fr));
+    gap:26px;padding:24px 28px 70px;max-width:1400px
+  }
+  .card{
+    border:1px solid var(--line);background:#fff;text-decoration:none;color:inherit;
+    display:flex;flex-direction:column;transition:transform .16s ease, box-shadow .16s ease
+  }
+  .card:hover{transform:translateY(-3px);box-shadow:0 10px 26px rgba(0,0,0,.10)}
+  .art{display:block;width:100%;aspect-ratio:4/3;background:#000}
+  .meta{padding:13px 15px 15px;border-top:1px solid var(--line)}
+  .who-line{display:flex;justify-content:space-between;align-items:baseline;gap:10px}
+  .ens{font-size:12.5px;font-weight:600;letter-spacing:.04em;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .id{font-size:10px;color:var(--dim);letter-spacing:.14em;flex:none}
+  .tune{font-size:11px;letter-spacing:.2em;margin-top:7px}
+  .attrs{font-size:10px;color:var(--dim);letter-spacing:.1em;margin-top:5px;line-height:1.7}
+  .state{padding:40px 28px;font-size:12px;color:var(--dim);letter-spacing:.12em}
+  .err{color:#a3341f}
+  footer{padding:26px 28px 60px;border-top:1px solid var(--line);font-size:11px;color:var(--dim);letter-spacing:.16em}
+  @media (max-width:560px){
+    .grid{grid-template-columns:1fr;padding:20px 18px 60px}
+    .intro,header,.count,footer{padding-left:18px;padding-right:18px}
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="brand">SOUNDPRINTS</div>
+  <div class="who">SUNKEN0X</div>
+</header>
+
+<section class="intro">
+  <h1>THE SOUND OF A WALLET</h1>
+  <p class="blurb">
+    Every wallet on Ethereum composes its own piece. These are the ones that have
+    been given away. Each is drawn from one address and one address only, gift
+    only, never sold by the artist.
+  </p>
+  <p class="chain">
+    Contract <a id="scan" href="#" target="_blank" rel="noopener">0xa14f4cef6210e85db5022ca557c8b132e1b1de99</a><br>
+    Engine, instrument and picture all live on Ethereum. This page reads every
+    piece straight off the chain.
+  </p>
+</section>
+
+<div class="count" id="count"></div>
+<div class="grid" id="grid"></div>
+<div class="state" id="state">reading the chain…</div>
+
+<footer>AUDIO MAPS · THE SOUND OF ETHEREUM</footer>
+
+<script>
+const CONTRACT = "0xa14f4cef6210e85db5022ca557c8b132e1b1de99";
+const PLAYER   = "https://audiomaps.sunken0x.art/?hash=";
+const RPCS = [
+  "https://ethereum-rpc.publicnode.com",
+  "https://eth.llamarpc.com",
+  "https://cloudflare-eth.com"
+];
+document.getElementById("scan").href = "https://etherscan.io/address/" + CONTRACT;
+
+/* ---- minimal eth_call plumbing (no libraries, so this runs from file://) ---- */
+let rpcIdx = 0;
+async function call(data){
+  let lastErr;
+  for (let n = 0; n < RPCS.length; n++){
+    const url = RPCS[(rpcIdx + n) % RPCS.length];
+    try{
+      const r = await fetch(url, {
+        method:"POST", headers:{"content-type":"application/json"},
+        body: JSON.stringify({jsonrpc:"2.0",id:1,method:"eth_call",
+          params:[{to:CONTRACT,data},"latest"]})
+      });
+      const j = await r.json();
+      if (j.error) throw new Error(j.error.message);
+      rpcIdx = (rpcIdx + n) % RPCS.length;
+      return j.result;
+    }catch(e){ lastErr = e; }
+  }
+  throw lastErr;
+}
+const SEL = { totalMinted:"0x", pieceOf:"0x", ownerOf:"0x" };
+// keccak selectors, hardcoded so we need no hashing library:
+SEL.totalMinted = "0xa2309ff8";   // totalMinted()      — verified via keccak
+SEL.pieceOf     = "0xa8d514bc";   // pieceOf(uint256)   — verified via keccak
+SEL.ownerOf     = "0x6352211e";   // ownerOf(uint256)   — verified via keccak
+
+const hexPad = n => n.toString(16).padStart(64,"0");
+const word   = (hex,i) => hex.slice(2 + i*64, 2 + (i+1)*64);
+const toInt  = w => parseInt(w,16);
+
+function decodeString(hex, wordOffsetBytes){
+  const start = 2 + wordOffsetBytes*2;
+  const len = parseInt(hex.slice(start, start+64),16);
+  const raw = hex.slice(start+64, start+64 + len*2);
+  let s = "";
+  for (let i=0;i<raw.length;i+=2) s += String.fromCharCode(parseInt(raw.substr(i,2),16));
+  return decodeURIComponent(escape(s));
+}
+
+/* Piece = (address,string,string,string,string,uint16,uint8,uint8,uint24,uint24)
+   Returned as a dynamic tuple: word0 = offset to the tuple, then its fields. */
+function decodePiece(hex){
+  const base = toInt(word(hex,0));                 // byte offset of tuple start
+  const at   = i => word(hex, base/32 + i);
+  const seed = "0x" + at(0).slice(24);
+  const strOff = i => base + toInt(at(i));          // string offsets are tuple-relative
+  return {
+    seed,
+    ens:     decodeString(hex, strOff(1)),
+    tune:    decodeString(hex, strOff(2)),
+    palette: decodeString(hex, strOff(3)),
+    wave:    decodeString(hex, strOff(4)),
+    tempo:   toInt(at(5)),
+    chaos:   toInt(at(6)),
+    waveIdx: toInt(at(7)),
+    ink:     toInt(at(8)),
+    bg:      toInt(at(9)),
+  };
+}
+const hexColour = n => "#" + n.toString(16).padStart(6,"0");
+
+/* ---- thumbnail: the same idea as the piece itself, lines displaced by a wave ---- */
+function waveAt(idx, x, y){
+  const t = x*Math.PI*2, u = y*Math.PI*2;
+  switch(idx){
+    case 0: return Math.sin(t*1.5) * (1 - Math.abs(y-0.5)*1.4);      // smooth center
+    case 1: return Math.sin(Math.hypot(x-0.5,y-0.5)*14);              // circular ripple
+    case 2: return Math.sin(t*2.2);                                   // linear wave
+    case 3: return Math.sin((x+y)*Math.PI*3.2);                       // diagonal sweep
+    case 4: return Math.sin(t*2)*Math.cos(u*2);                       // cross pattern
+    case 5: return Math.sin(Math.atan2(y-0.5,x-0.5)*6)*0.9;           // radial burst
+    case 6: return Math.sign(Math.sin(t*3))*0.75;                     // square wave
+    case 7: return ((x*4)%1 - 0.5)*1.7;                               // sawtooth
+    case 8: return Math.abs(((x*4)%1)-0.5)*3 - 0.75;                  // zigzag
+    default:{ const d=Math.max(Math.abs(x-0.5),Math.abs(y-0.5));       // concentric squares
+              return Math.sin(d*18); }
+  }
+}
+function drawThumb(cv, p){
+  const W = cv.width, H = cv.height, g = cv.getContext("2d");
+  g.fillStyle = hexColour(p.bg); g.fillRect(0,0,W,H);
+  const amp   = 3 + p.chaos * 2.6;
+  const lines = 34;
+  g.strokeStyle = hexColour(p.ink);
+  g.lineWidth = 1.15;
+  g.globalAlpha = .95;
+  for (let i=0;i<lines;i++){
+    const y = (i+0.5)/lines;
+    g.beginPath();
+    for (let s=0;s<=110;s++){
+      const x = s/110;
+      const d = waveAt(p.waveIdx, x, y) * amp;
+      const px = 10 + x*(W-20);
+      const py = 8 + y*(H-16) + d;
+      s ? g.lineTo(px,py) : g.moveTo(px,py);
+    }
+    g.stroke();
+  }
+}
+
+/* ---- build ---- */
+(async function(){
+  const state = document.getElementById("state");
+  const grid  = document.getElementById("grid");
+  try{
+    const total = toInt(await call(SEL.totalMinted));
+    document.getElementById("count").textContent = total + (total===1?" PIECE GIVEN":" PIECES GIVEN");
+    if (!total){ state.textContent = "none gifted yet."; return; }
+    state.textContent = "";
+    for (let id=1; id<=total; id++){
+      try{
+        const raw = await call(SEL.pieceOf + hexPad(id));
+        const p = decodePiece(raw);
+        const a = document.createElement("a");
+        a.className = "card";
+        a.href = PLAYER + p.seed.toLowerCase();
+        a.target = "_blank"; a.rel = "noopener";
+        a.title = "play " + p.ens;
+        const cv = document.createElement("canvas");
+        cv.className = "art"; cv.width = 536; cv.height = 402;
+        a.appendChild(cv);
+        const m = document.createElement("div");
+        m.className = "meta";
+        m.innerHTML =
+          '<div class="who-line"><span class="ens"></span><span class="id">#'+id+'</span></div>'+
+          '<div class="tune"></div>'+
+          '<div class="attrs"></div>';
+        a.appendChild(m);
+        m.querySelector(".ens").textContent  = p.ens;
+        m.querySelector(".tune").textContent = p.tune + "  ·  " + p.tempo + " BPM";
+        m.querySelector(".attrs").textContent = p.palette + " · " + p.wave + " · chaos " + p.chaos;
+        grid.appendChild(a);
+        drawThumb(cv, p);
+      }catch(e){
+        console.warn("token " + id + " failed", e);
+      }
+    }
+    if (!grid.children.length) state.innerHTML = '<span class="err">could not read any pieces.</span>';
+  }catch(e){
+    state.innerHTML = '<span class="err">could not reach the chain: ' + (e && e.message ? e.message : e) + '</span>';
+  }
+})();
+</script>
+</body>
+</html>

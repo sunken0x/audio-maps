@@ -530,19 +530,6 @@
   #foot { max-width: 760px; margin: 0 auto; padding: 34px 26px 60px; border-top: 1px solid var(--line);
     display: flex; justify-content: space-between; font-size: 10px; letter-spacing: 3px; text-transform: uppercase; color: var(--ink-mute); }
 
-  #onchain-proof { max-width: 760px; margin: 0 auto; padding: 40px 26px 0; }
-  #onchain-proof h2 { font-size: 11px; letter-spacing: 3px; text-transform: uppercase;
-    color: var(--ink-mute); margin: 0 0 12px; font-weight: 600; }
-  #onchain-proof p { font-size: 13px; line-height: 1.7; margin: 0 0 16px; }
-  .chainlist { list-style: none; padding: 0; margin: 0 0 18px; font-size: 12px; }
-  .chainlist li { display: flex; justify-content: space-between; gap: 16px;
-    padding: 7px 0; border-bottom: 1px solid var(--line); }
-  .chainlist span { color: var(--ink-mute); letter-spacing: 1px; text-transform: uppercase; font-size: 10px; }
-  .chainlist a { font-family: ui-monospace, Menlo, monospace; }
-  .verify { font-size: 11px; color: var(--ink-mute); }
-  .verify code { display: block; margin-top: 6px; padding: 10px 12px; background: rgba(0,0,0,.045);
-    border-radius: 3px; font-size: 10px; overflow-x: auto; white-space: nowrap; }
-
   .grailgrid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-top: 8px; }
   .grail { display: flex; flex-direction: column; gap: 4px; text-align: left; background: #fff;
     border: 1px solid var(--line); border-radius: 3px; padding: 15px 16px 13px; font: inherit; cursor: pointer;
@@ -638,27 +625,6 @@
       <button type="submit">Send enquiry</button>
       <div id="enquiryNote"></div>
     </form>
-  </section>
-
-  <section id="onchain-proof">
-    <h2>On Ethereum</h2>
-    <p>The engine that composes these pieces is not hosted here. It lives on Ethereum,
-    and so does the instrument. This page runs the identical code.</p>
-    <ul class="chainlist">
-      <li><span>Soundprints</span>
-        <a href="https://etherscan.io/token/0xa14f4CeF6210e85db5022ca557c8B132e1B1DE99" target="_blank" rel="noopener">0xa14f4CeF&hellip;DE99</a></li>
-      <li><span>Renderer</span>
-        <a href="https://etherscan.io/address/0x7D5a0bb2a597bAd0B2D0e9c0bda56626f8583B96" target="_blank" rel="noopener">0x7D5a0bb2&hellip;3B96</a></li>
-      <li><span>Engine</span>
-        <a href="https://ethfs.xyz" target="_blank" rel="noopener">audiomaps-engine-v2.js.gz</a></li>
-      <li><span>Instrument</span>
-        <a href="https://ethfs.xyz" target="_blank" rel="noopener">audiomaps-piano-v1.bin</a></li>
-      <li><span>File store</span>
-        <a href="https://etherscan.io/address/0xFe1411d6864592549AdE050215482e4385dFa0FB" target="_blank" rel="noopener">EthFS 0xFe1411&hellip;a0FB</a></li>
-    </ul>
-    <p class="verify">Check it yourself &mdash; read the engine straight off the chain and
-    run it against any wallet:<br>
-    <code>cast call 0xFe1411d6864592549AdE050215482e4385dFa0FB "readFile(string)(string)" "audiomaps-engine-v2.js.gz"</code></p>
   </section>
 
   <footer id="foot">
