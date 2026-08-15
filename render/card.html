@@ -1,0 +1,108 @@
+<!doctype html>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Audio Maps — render card</title>
+<style>
+:root{--bg:#0b0c10;--ink:#dfe3ec;--dim:#7a869e;--hot:#ff6b6b;--line:#1d2434}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);
+ font:13px/1.55 ui-monospace,Menlo,monospace;padding:20px;display:flex;gap:22px;
+ align-items:flex-start;flex-wrap:wrap}
+.panel{width:330px;flex:0 0 330px}
+h1{font-size:13px;letter-spacing:.16em;margin:0 0 3px;font-weight:700}
+.sub{color:var(--dim);font-size:11px;margin-bottom:16px}
+label{display:block;color:var(--dim);font-size:10px;letter-spacing:.1em;
+ text-transform:uppercase;margin:12px 0 4px}
+input,select,button{width:100%;background:#131a29;color:var(--ink);
+ border:1px solid var(--line);padding:8px 10px;font:inherit;border-radius:3px}
+button{cursor:pointer;background:#1b2436}button:hover{background:#243049}
+button:disabled{opacity:.4;cursor:default}
+button.go{background:var(--hot);color:#0b0c10;font-weight:700;border-color:transparent;
+ margin-top:14px}
+.two{display:flex;gap:8px}
+/* display:flex/block beats the hidden attribute, so it needs saying outright */
+[hidden]{display:none !important}
+#log{margin-top:14px;color:var(--dim);font-size:11px;min-height:34px}
+/* flex:0 0 auto or the card gets shrunk to a thumbnail by the panel's height */
+#card{flex:0 0 auto;align-self:flex-start;height:min(92vh,900px);width:auto;
+ max-width:calc(100vw - 400px);object-fit:contain;
+ box-shadow:0 10px 50px rgba(0,0,0,.65);border-radius:2px}
+#out{max-height:200px}
+
+/* Phone: card first, controls under it. Sized by width, not height — on a
+   handset the picture has to fit across, and a height-driven card runs off
+   the side of the screen. */
+@media (max-width:760px){
+  body{padding:14px;gap:14px;flex-direction:column-reverse;justify-content:flex-end}
+  .panel{width:100%;flex:1 1 auto}
+  #card{align-self:center;width:100%;height:auto;max-width:100%;max-height:62vh}
+  input,select,button{padding:11px 12px;font-size:16px}  /* 16px: iOS zooms below it */
+  .note{font-size:11px}
+}
+.note{color:var(--dim);font-size:10px;line-height:1.7;margin-top:16px;
+ border-top:1px solid var(--line);padding-top:12px}
+code{color:#9fd0ff}
+</style>
+
+<div class=panel>
+  <h1>RENDER CARD</h1>
+  <div class=sub>Composes with the on-chain engine, frames it, records picture and
+  music to one file.</div>
+
+  <label>ens, wallet, or any 0x hash — what you type is what the card says</label>
+  <input id=seed value="0xa14f4CeF6210e85db5022ca557c8B132e1B1DE99"
+         placeholder="regulardad.eth  or  0x…" spellcheck=false>
+
+  <div class=two>
+    <div style="flex:1">
+      <label>format</label>
+      <select id=fmt>
+        <option>1:1</option><option selected>4:5</option>
+        <option>9:16</option><option>16:9</option>
+      </select>
+    </div>
+    <div style="flex:1">
+      <label>matte</label>
+      <select id=matte><option value=paper selected>paper</option>
+        <option value=ink>ink</option></select>
+    </div>
+    <div style="flex:0 0 78px">
+      <label>loops</label>
+      <select id=loops><option>1</option><option selected>2</option>
+        <option>3</option><option>4</option></select>
+    </div>
+  </div>
+
+  <button class=go id=go>COMPOSE</button>
+  <div class=two style="margin-top:8px">
+    <button id=play>play</button>
+    <button id=rec disabled>RECORD</button>
+  </div>
+  <button id=link style="margin-top:6px">COPY SHARE LINK</button>
+
+  <div id=log>loading…</div>
+  <video id=out controls loop playsinline hidden
+         style="width:100%;margin-top:8px;border-radius:3px"></video>
+  <div class=two id=saverow hidden style="margin-top:6px">
+    <button class=go id=dl style="margin-top:0">DOWNLOAD</button>
+    <button id=share hidden>SHARE</button>
+  </div>
+  <button id=post hidden style="margin-top:6px">POST ON X</button>
+
+  <div class=note>
+    One loop is <span id=loopsec>—</span>s, so the file is that times the loop count
+    and cuts on the bar. Recording plays in real time; leave the tab in front, a
+    background tab throttles the capture.<br><br>
+    MP4 out, H.264 and AAC, ready to upload. No conversion step. Nothing is
+    saved until you ask — the take appears in a player and you choose
+    download, or share it straight into another app on a phone.<br><br>
+    If a platform ever refuses the file, remux it — this rewrites the container
+    only and does not touch the picture or the sound:<br>
+    <code>ffmpeg -i in.mp4 -c copy -movflags +faststart out.mp4</code>
+  </div>
+</div>
+
+<canvas id=card width=1080 height=1350></canvas>
+
+<script src="assets.js"></script>
+<script src="boot.js"></script>
