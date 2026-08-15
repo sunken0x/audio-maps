@@ -3,7 +3,7 @@
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Audio Maps — render card</title>
 <style>
-:root{--bg:#0b0c10;--ink:#dfe3ec;--dim:#7a869e;--hot:#ff6b6b;--line:#1d2434}
+:root{--bg:#efece4;--ink:#16161d;--dim:rgba(22,22,29,.55);--hot:#16161d;--line:rgba(22,22,29,.18)}
 *{box-sizing:border-box}
 body{margin:0;background:var(--bg);color:var(--ink);
  font:13px/1.55 ui-monospace,Menlo,monospace;padding:20px;display:flex;gap:22px;
@@ -13,11 +13,11 @@ h1{font-size:13px;letter-spacing:.16em;margin:0 0 3px;font-weight:700}
 .sub{color:var(--dim);font-size:11px;margin-bottom:16px}
 label{display:block;color:var(--dim);font-size:10px;letter-spacing:.1em;
  text-transform:uppercase;margin:12px 0 4px}
-input,select,button{width:100%;background:#131a29;color:var(--ink);
+input,select,button{width:100%;background:#e7e3d9;color:var(--ink);
  border:1px solid var(--line);padding:8px 10px;font:inherit;border-radius:3px}
-button{cursor:pointer;background:#1b2436}button:hover{background:#243049}
+button{cursor:pointer;background:transparent}button:hover{background:rgba(22,22,29,.07)}
 button:disabled{opacity:.4;cursor:default}
-button.go{background:var(--hot);color:#0b0c10;font-weight:700;border-color:transparent;
+button.go{background:var(--hot);color:#efece4;font-weight:700;border-color:transparent;
  margin-top:14px}
 .two{display:flex;gap:8px}
 /* display:flex/block beats the hidden attribute, so it needs saying outright */
@@ -26,7 +26,7 @@ button.go{background:var(--hot);color:#0b0c10;font-weight:700;border-color:trans
 /* flex:0 0 auto or the card gets shrunk to a thumbnail by the panel's height */
 #card{flex:0 0 auto;align-self:flex-start;height:min(92vh,900px);width:auto;
  max-width:calc(100vw - 400px);object-fit:contain;
- box-shadow:0 10px 50px rgba(0,0,0,.65);border-radius:2px}
+ box-shadow:0 10px 50px rgba(22,22,29,.18);border-radius:2px}
 #out{max-height:200px}
 
 /* Phone: card first, controls under it. Sized by width, not height — on a
@@ -41,7 +41,7 @@ button.go{background:var(--hot);color:#0b0c10;font-weight:700;border-color:trans
 }
 .note{color:var(--dim);font-size:10px;line-height:1.7;margin-top:16px;
  border-top:1px solid var(--line);padding-top:12px}
-code{color:#9fd0ff}
+code{color:#16161d}
 </style>
 
 <div class=panel>
