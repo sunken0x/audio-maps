@@ -32,6 +32,17 @@ const WAVES = [
   (x,y,t)=>Math.sin(t*0.001-Math.max(Math.abs(x),Math.abs(y))*0.8)*2
 ];
 
+/*  The ten wave names. These are a PRESENTATION layer: the engine holds ten
+ *  unnamed maths functions and knows nothing about these strings, so the two
+ *  lists are only in step because they sit next to each other. Reorder or edit
+ *  WAVES above and every wave name ever published silently points at a
+ *  different pattern. Keep them adjacent, and change them together or not at
+ *  all. Same list as render/mint.html. */
+const WAVE_NAMES = ["Smooth Center","Circular Ripple","Linear Wave","Diagonal Sweep",
+  "Radial Burst","Cross Pattern","Square Wave","Sawtooth Wave","Zigzag Pattern",
+  "Concentric Squares"];
+
+
 /*  Read off CHAOS_GLITCH / CHAOS_OCTAVES in the engine, never from a summary.
  *  A wrong table here makes a render show a different amount of destruction
  *  than the piece actually plays, and that has happened in both directions. */
@@ -244,6 +255,7 @@ try {
   let NL = NLB, PT = PTB, hx = 0, hy = 0;
 
   let p = null, urls = null, seedLabel = "", seedAddr = "";
+  let msd = null;
   let smp = null, part = null, t0 = performance.now();
 
   function build(aw, ah){
@@ -359,7 +371,7 @@ try {
     fit(seedLabel, Math.round(U * 0.0245));
     cctx.fillText(seedLabel, bx, by + L2);
 
-    const traits = `${p.motif.name}   ${p.tempo} BPM   ${p.scheme.name}   CHAOS ${p.chaos}`;
+    const traits = `${p.motif.name}   ${p.tempo} BPM   CHAOS ${p.chaos}   ${p.scheme.name}   ${WAVE_NAMES[p.waveIdx]}`;
     cctx.globalAlpha = 0.5;
     fit(traits, Math.round(U * 0.019));
     cctx.fillText(traits, bx, by + L3);
@@ -458,7 +470,7 @@ try {
     rip.length = 0; bassFlash = 0;
     if (!timer){ t0 = performance.now(); timer = setInterval(() => frame(performance.now() - t0), 16); }
     if (part){ part.dispose(); part = null; Tone.Transport.stop(); Tone.Transport.cancel(); }
-    say(`${p.motif.name} · ${p.tempo} bpm · ${p.scheme.name} · chaos ${p.chaos} · ${Object.keys(urls).length} notes`);
+    say(`${p.motif.name} · ${p.tempo} bpm · chaos ${p.chaos} · ${p.scheme.name} · ${WAVE_NAMES[p.waveIdx]} · ${Object.keys(urls).length} notes`);
     $("rec").disabled = !canRecord;
     $("saverow").hidden = true;
     $("loopsec").textContent = loopSeconds().toFixed(1);
@@ -472,6 +484,9 @@ try {
       await Tone.loaded();
     }
     Tone.Transport.stop(); Tone.Transport.cancel();
+    /* the old Part is still scheduled until it is disposed; without this a
+     * second take plays the previous piece underneath the new one */
+    if (part){ try { part.dispose(); } catch(e){} part = null; }
     Tone.Transport.bpm.value = p.tempo;
     const ts = p.transposeSemis + p.octaveShift * 12;
     const ev = p.motif.melody.map(a => {
@@ -493,9 +508,18 @@ try {
     $("rec").disabled = true;
     await startAudio();
 
+    /*  ONE tap, made once and left connected.
+     *
+     *  This used to build a MediaStreamDestination per take and disconnect it
+     *  afterwards with Tone.Destination.disconnect(msd). That call takes the
+     *  Destination's outputs with it, so the FIRST record worked and every one
+     *  after it captured silence. An idle stream destination costs nothing, so
+     *  it is made once and never torn down. */
     const rawCtx = Tone.context.rawContext || Tone.context;
-    const msd = rawCtx.createMediaStreamDestination();
-    Tone.Destination.connect(msd);
+    if (!msd){
+      msd = rawCtx.createMediaStreamDestination();
+      Tone.Destination.connect(msd);
+    }
 
     const vs = card.captureStream(60);
     const stream = new MediaStream([...vs.getVideoTracks(), ...msd.stream.getAudioTracks()]);
@@ -530,7 +554,7 @@ try {
     rec.stop();
     await new Promise(r => rec.onstop = r);
     Tone.Transport.stop();
-    Tone.Destination.disconnect(msd);
+    /* msd deliberately stays connected — see the note where it is created */
 
     const slug = seedLabel.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
     const name = `audiomaps-${slug}-${$("fmt").value.replace(":","x")}.${ext}`;
@@ -548,30 +572,24 @@ try {
     $("saverow").hidden = false;
     $("dl").onclick = async () => say(await saveTo(blob, name));
 
-    /*  The share carries the post, not just the file. Left to write their own
-     *  caption most people write nothing, and a silent video of lines moving
-     *  explains none of itself. This says what it is, what to do, and where to
-     *  go and get one. */
-    const post =
-      `Every Ethereum wallet has a sound.\n\n` +
-      `This is mine. ${p.motif.name}, ${p.tempo} bpm.\n\n` +
-      `Hear yours: audiomaps.sunken0x.art/render/\n\n` +
-      `Sound on 🔊`;
-
+    /*  THE CAPTION IS DELIBERATELY GONE — 2026-08-17.
+     *
+     *  This page used to hand over a written post and a POST ON X button. It
+     *  was the right call while the ask was volume, and it is the wrong call
+     *  now: spots are given for saying something true about the collection in
+     *  your own words, and a canned caption makes every entry read the same.
+     *  Handing someone the words removes the only thing being judged.
+     *
+     *  The file share stays. On a phone the share sheet is how a video reaches
+     *  Photos or the app you are posting from, so removing it would stop people
+     *  posting at all. It carries the video and nothing else. The words are
+     *  theirs. */
     const file = new File([blob], name, { type: blob.type });
     const canShare = navigator.canShare && navigator.canShare({ files: [file] });
     $("share").hidden = !canShare;
     if (canShare) $("share").onclick = async () => {
-      try { await navigator.share({ files: [file], text: post }); }
+      try { await navigator.share({ files: [file] }); }
       catch (e){ if (e.name !== "AbortError") say("share failed: " + e.message); }
-    };
-    // Desktop has no share sheet, and X cannot be handed a video by a link, so
-    // the caption goes to the clipboard and the video is attached by hand.
-    $("post").hidden = false;
-    $("post").onclick = async () => {
-      try { await navigator.clipboard.writeText(post); } catch (e){}
-      say("caption copied. attach the video in the window that opened.");
-      open("https://twitter.com/intent/tweet?text=" + encodeURIComponent(post), "_blank");
     };
 
     say(`${mb} MB, ${secs.toFixed(1)}s — ready below`);
@@ -639,11 +657,12 @@ try {
   if (!canRecord) say("this browser cannot record — the picture and sound still work");
 
   // and a way to get that link back out
-  $("link").onclick = async () => {
-    const url = location.origin + location.pathname + "?a=" + encodeURIComponent(seedLabel);
-    try { await navigator.clipboard.writeText(url); say("link copied — " + url); }
-    catch (e){ say(url); }
-  };
+  /*  The COPY SHARE LINK button was removed 2026-08-18. It only ever put a URL
+   *  on the clipboard, and a URL is the one thing that should never travel:
+   *  people were posting the link instead of the video, so the artwork never
+   *  appeared in the timeline. The ?a= seed parameter is still read on load,
+   *  so links already shared keep working. The SHARE button below stays —
+   *  that one hands over the actual MP4. */
 } catch (e){
   say("error: " + e.message);
   console.error(e);
