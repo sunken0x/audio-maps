@@ -488,7 +488,17 @@ try {
      * second take plays the previous piece underneath the new one */
     if (part){ try { part.dispose(); } catch(e){} part = null; }
     Tone.Transport.bpm.value = p.tempo;
-    const ts = p.transposeSemis + p.octaveShift * 12;
+    /*  OCTAVE, a performance control on the RENDER only.
+     *
+     *  ⚠ This does NOT change the token. The piece on chain plays at the octave
+     *  its seed chose, forever. This shifts the recording so a piece that sits
+     *  too low on the Kawai's muddy bottom end can be heard properly in a video.
+     *  A card rendered at +1 is a performance of the piece, not a copy of it.
+     *
+     *  shift() clamps to C2..C7, so notes that would leave the sampled range
+     *  fold back rather than disappearing. */
+    const oct = parseInt(($("oct") && $("oct").value) || "0", 10) || 0;
+    const ts = p.transposeSemis + (p.octaveShift + oct) * 12;
     const ev = p.motif.melody.map(a => {
       let v = a[3] * p.velMul; if (v < 0.05) v = 0.05; if (v > 1) v = 1;
       return { time: a[0], note: shift(a[1], ts), dur: a[2], vel: v };
