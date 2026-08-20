@@ -217,6 +217,44 @@ async function resolveOn(name, url){
   if (!got || /^0x0*$/.test(got)) return null;
   return "0x" + got.slice(-40);
 }
+/*  AUDIO MAPS, live on mainnet. Typing a token number reads that token's own
+ *  seed off the contract and renders the actual piece somebody owns, rather
+ *  than composing something new from a wallet. Post-reveal this is what most
+ *  people want from the tool: hear mine, hear theirs.
+ *
+ *  The name comes from the metadata contract, so a revealed token renders as
+ *  "BRINE PULSE" and an unrevealed one as "Audio Maps #417" without this file
+ *  needing to know which is which. */
+const AUDIOMAPS = "0x31e107afb3e76ca66f91be62b8b65a1a30ed55d8";
+const METADATA  = "0xa569216ca382e548a5162eb0c2888c289b7ef44c";
+
+/// ABI-decode a single returned string.
+function decodeString(hex){
+  if (!hex || hex === "0x") return "";
+  const b = hex.slice(2);
+  const len = parseInt(b.slice(64, 128), 16);
+  let out = "";
+  for (let i = 0; i < len; i++) out += String.fromCharCode(parseInt(b.substr(128 + i * 2, 2), 16));
+  return out;
+}
+
+/// seed and name for one token, over whichever endpoint answers first.
+async function tokenPiece(id){
+  const arg = BigInt(id).toString(16).padStart(64, "0");
+  let last = null;
+  for (const url of RPCS){
+    try {
+      const seed = decodeString(await rpc(AUDIOMAPS, selector("seedHex(uint256)") + arg, url));
+      if (!/^0x[0-9a-f]{64}$/.test(seed)) throw new Error("no seed for token " + id);
+      let name = "";
+      try { name = decodeString(await rpc(METADATA, selector("nameOf(uint256)") + arg, url)); }
+      catch (e){ /* unrevealed or metadata swapped: the piece still plays */ }
+      return { seed, name: name || ("Audio Maps #" + id) };
+    } catch (e){ last = e; }
+  }
+  throw last || new Error("no endpoint answered");
+}
+
 /// Same, over whichever endpoint answers first. Throws only if none of them do,
 /// which is the one case worth telling the user about.
 async function resolveENS(name){
@@ -451,7 +489,16 @@ try {
      * does not care how long it is, so a 32-byte BLOCK hash composes perfectly
      * well — the genesis block is a piece. Requiring exactly 40 characters was
      * the tool being narrower than the thing it drives. */
-    if (/^0x[0-9a-fA-F]{8,64}$/.test(raw)){
+    /*  A bare number is a TOKEN, not a seed. 1 to 1000, with or without a #. */
+    const asToken = raw.replace(/^#/, "");
+    if (/^\d{1,4}$/.test(asToken) && +asToken >= 1 && +asToken <= 1000){
+      say(`reading token ${asToken} off the chain…`);
+      let got;
+      try { got = await tokenPiece(+asToken); }
+      catch (e){ say("could not read token " + asToken + ": " + e.message); return; }
+      seedAddr = got.seed;
+      seedLabel = got.name;                            // the card says its real name
+    } else if (/^0x[0-9a-fA-F]{8,64}$/.test(raw)){
       seedAddr = raw.toLowerCase();                    // casing changes the art
     } else if (raw.includes(".")){
       say(`resolving ${raw}…`);
@@ -461,7 +508,7 @@ try {
       if (!got){ say(`${raw} does not resolve to an address`); return; }
       seedAddr = got.toLowerCase();
     } else {
-      say("not an ENS name, a wallet, or a 0x hash");
+      say("type a token number, an ENS name, a wallet, or a 0x hash");
       return;
     }
     p = AM125.derive(seedAddr);
