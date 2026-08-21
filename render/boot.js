@@ -96,7 +96,8 @@ const COLLECTION = "AUDIOMAPS";
 const MATTES = {
   paper: { bg: "#efece4", ink: "#16161d", rule: "rgba(22,22,29,0.30)" },
   ink:   { bg: "#0c0c11", ink: "#e8e5dd", rule: "rgba(232,229,221,0.28)" },
-  green: { bg: "#00c805", ink: "#04220a", rule: "rgba(4,34,10,0.32)" }
+  green: { bg: "#00c805", ink: "#04220a", rule: "rgba(4,34,10,0.32)" },
+  lime:  { bg: "#ccff00", ink: "#1c3d00", rule: "rgba(28,61,0,0.34)" }
 };
 
 /* Letter-spaced text. ctx.letterSpacing exists in Chrome but not everywhere,
@@ -282,7 +283,7 @@ async function _loadTokens(){
     /*  Versioned like the scripts. A stale tokens.json is less dangerous than
      *  stale code, but a cached one from before the rare flags existed would
      *  let the forge accept a moment, which is the one thing it must not do. */
-    const r = await fetch("tokens.json?v=20260821c");
+    const r = await fetch("tokens.json?v=20260821d");
     if (!r.ok) throw new Error(r.status);
     TOKENS = await r.json();
   } catch (e){
