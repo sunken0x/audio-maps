@@ -279,7 +279,10 @@ let TOKENS = null, BY_NAME = null, TOKENS_P = null, TOKENS_FAILED = false;
 function loadTokens(){ return TOKENS_P || (TOKENS_P = _loadTokens()); }
 async function _loadTokens(){
   try {
-    const r = await fetch("tokens.json");
+    /*  Versioned like the scripts. A stale tokens.json is less dangerous than
+     *  stale code, but a cached one from before the rare flags existed would
+     *  let the forge accept a moment, which is the one thing it must not do. */
+    const r = await fetch("tokens.json?v=20260821c");
     if (!r.ok) throw new Error(r.status);
     TOKENS = await r.json();
   } catch (e){
