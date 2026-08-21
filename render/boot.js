@@ -255,6 +255,70 @@ async function tokenPiece(id){
   throw last || new Error("no endpoint answered");
 }
 
+/*  THE TOKEN INDEX.
+ *
+ *  Collectors know their piece by its NAME. Almost nobody has looked up the
+ *  number - the name is what the marketplace shows and what they say out loud.
+ *  So the tool has to accept "LATE SWARM" as readily as 66.
+ *
+ *  Searching by name means holding all 1,000 names, and asking the chain for
+ *  them one at a time is 1,000 round trips per visitor. They are written on
+ *  chain once and do not drift, so pull-names.mjs pulls them into tokens.json
+ *  and this reads that. If the file is missing, numbers still work and only
+ *  name search is lost - the tool degrades rather than dying. */
+let TOKENS = null, BY_NAME = null, TOKENS_P = null, TOKENS_FAILED = false;
+/*  Guard on the PROMISE, not the result. Guarding on the value let the startup
+ *  load and the first compose both get past the check before either finished,
+ *  so the list was fetched twice and every name appeared twice in the
+ *  autocomplete. */
+function loadTokens(){ return TOKENS_P || (TOKENS_P = _loadTokens()); }
+async function _loadTokens(){
+  try {
+    const r = await fetch("tokens.json");
+    if (!r.ok) throw new Error(r.status);
+    TOKENS = await r.json();
+  } catch (e){
+    /*  SAY SO. When this file fails to load, every name stops resolving and the
+     *  only symptom was "not a token number, ENS name, wallet or 0x hash" on a
+     *  name that is obviously a piece. That reads as COMPOSE being broken, not
+     *  as a missing file, and it sent us hunting a bug that was not there. */
+    TOKENS = []; TOKENS_FAILED = true;
+    return TOKENS;
+  }
+  BY_NAME = new Map();
+  for (const t of TOKENS) BY_NAME.set(t.n.toLowerCase(), t);
+  const dl = $("names");
+  if (dl){
+    const frag = document.createDocumentFragment();
+    for (const t of TOKENS){
+      const o = document.createElement("option");
+      o.value = t.n; o.label = "#" + t.i;
+      frag.appendChild(o);
+    }
+    dl.appendChild(frag);
+  }
+  return TOKENS;
+}
+/*  Loose name matching, because people type what they remember. Exact first,
+ *  then unique prefix, then unique substring. AMBIGUOUS IS AN ERROR, not a
+ *  guess: silently picking the first of several matches would render somebody
+ *  else's piece under the name they typed, and they would never know. */
+function findByName(q){
+  if (!BY_NAME) return null;
+  const k = q.trim().toLowerCase();
+  if (!k) return null;
+  const exact = BY_NAME.get(k);
+  if (exact) return exact;
+  let hits = TOKENS.filter(t => t.n.toLowerCase().startsWith(k));
+  if (!hits.length) hits = TOKENS.filter(t => t.n.toLowerCase().includes(k));
+  if (hits.length === 1) return hits[0];
+  if (hits.length > 1){
+    const e = new Error(`"${q}" matches ${hits.length} pieces - ${hits.slice(0,3).map(t => t.n).join(", ")}${hits.length>3?"…":""}`);
+    e.ambiguous = true; throw e;
+  }
+  return null;
+}
+
 /// Same, over whichever endpoint answers first. Throws only if none of them do,
 /// which is the one case worth telling the user about.
 async function resolveENS(name){
@@ -293,6 +357,85 @@ try {
   let NL = NLB, PT = PTB, hx = 0, hy = 0;
 
   let p = null, urls = null, seedLabel = "", seedAddr = "";
+  /*  THE FORGED DUET, previewed. pB is the second parent; when it is null
+   *  everything below behaves exactly as it always has, so solo is untouched. */
+  let pB = null;
+  const SPLIT = 52;                                    // E3 - bass below, top above
+  function midiOf(n){ const q = split(n), k = PC.indexOf(q[0]); return k < 0 ? -1 : k + (1 + q[1]) * 12; }
+  function dur16(d){ const dot = d.indexOf(".") >= 0, tri = d.indexOf("t") >= 0;
+    const b = {1:16,2:8,4:4,8:2,16:1,32:0.5}[parseInt(d,10)] || 2; return b*(dot?1.5:1)*(tri?2/3:1); }
+  function at16(t){ const q = String(t).split(":"); return (+q[0])*16 + (+q[1])*4 + (+(q[2]||0)); }
+  function mixHex(a, b, t){
+    const r = Math.round(((a>>16)&255) + (((b>>16)&255)-((a>>16)&255))*t);
+    const g = Math.round(((a>>8)&255)  + (((b>>8)&255) -((a>>8)&255)) *t);
+    const c = Math.round((a&255)       + ((b&255)      -(a&255))      *t);
+    return (r<<16)|(g<<8)|c;
+  }
+  /*  Bass from one parent, top from the other, split at E3 - the merge the
+   *  forge performs. The bass is forced MONOPHONIC: two parents overlapping in
+   *  the bottom octaves turns to mud on the Kawai, so the earliest note wins
+   *  its slot and anything starting inside it is dropped.
+   *
+   *  PLACE each parent in its register before splitting, do not merely filter
+   *  by it. Filtering alone was the first version and it is wrong for most
+   *  pairs. Measured on 417 + 233: ROLLING is treble-heavy, so only 8 of its 84
+   *  notes fell below E3, and STAGGER is bass-heavy, so NONE of its 72 reached
+   *  it. The result was eight notes of one parent and silence from the other -
+   *  a "duet" that was a thinned-out solo. Across a thousand tokens people will
+   *  pair anything, and a merge that only works when both parents happen to
+   *  suit their roles does not work.
+   *
+   *  Each parent is moved by WHOLE OCTAVES until its middle note sits in the
+   *  register it has been given. Octaves preserve the key, and the two halves
+   *  must still agree harmonically - that is what ks aligns.
+   *
+   *  Loop length is the BASS parent's. Where the top parent is longer its
+   *  overhanging notes are dropped rather than stretching the loop, because a
+   *  loop long enough for both leaves the bass silent for half of it. */
+  function duetEvents(A, B, oct){
+    const ks  = A.transposeSemis - B.transposeSemis;
+    const tsA = A.transposeSemis + (A.octaveShift + oct) * 12;
+    const tsB = B.transposeSemis + (B.octaveShift + oct) * 12 + ks;
+    const bars16 = A.motif.loopBars * 16;
+    const median = (mel, ts) => {
+      const v = mel.map(a => midiOf(a[1]) + ts).filter(m => m >= 0).sort((x, y) => x - y);
+      return v.length ? v[v.length >> 1] : 60;
+    };
+    const fit = (mel, ts, centre) => {
+      let k = Math.round((centre - median(mel, ts)) / 12);
+      if (k > 3) k = 3; if (k < -3) k = -3;            // never fling a part off the keyboard
+      return ts + k * 12;
+    };
+    const fA = fit(A.motif.melody, tsA, 40);           // around E2, under the split
+    const fB = fit(B.motif.melody, tsB, 64);           // around E4, over it
+
+    /*  FOLD into the register, never discard.
+     *
+     *  Filtering after the octave fit still threw most of the bass away, and
+     *  the reason is shift(): it clamps to MIDI 36..96, so a note pushed under
+     *  36 folds back UP an octave, lands above E3 and is then dropped for not
+     *  being bass. Measured on 417 + 233 that left 8 bass notes against 66 top.
+     *
+     *  Folding by octave keeps the pitch class - which is what makes it still
+     *  the same tune - while guaranteeing the note lands in the half it was
+     *  assigned to. Contour compresses, exactly as a bass reduction does. */
+    const NAME = v => PC[mod(v, 12)] + (Math.floor(v / 12) - 1);
+    const fold = (v, lo, hi) => { while (v >= hi) v -= 12; while (v < lo) v += 12; return v; };
+    const low = A.motif.melody
+      .map(a => { const m = midiOf(a[1]); return m < 0 ? null
+        : [a[0], NAME(fold(m + fA, 33, SPLIT)), a[2], a[3] * A.velMul]; })
+      .filter(Boolean)
+      .sort((x, y) => at16(x[0]) - at16(y[0]));
+    const mono = []; let free = -1;
+    for (const e of low){ const st = at16(e[0]); if (st < free) continue; mono.push(e); free = st + dur16(e[2]); }
+    const high = B.motif.melody
+      .map(a => { const m = midiOf(a[1]); return m < 0 || at16(a[0]) >= bars16 ? null
+        : [a[0], NAME(fold(m + fB, SPLIT, 85)), a[2], a[3] * B.velMul * 0.92]; })
+      .filter(Boolean);
+    return mono.concat(high).map(e => ({
+      time: e[0], note: e[1], dur: e[2],
+      vel: Math.max(0.05, Math.min(1, e[3])) }));
+  }
   let msd = null;
   let smp = null, part = null, t0 = performance.now();
 
@@ -314,14 +457,20 @@ try {
         if (Math.abs(Y) > hy) hy = Math.abs(Y);
       }
       const g = new THREE.LineGeometry(); g.setPositions(pos);
-      const m = new THREE.Line2(g, mat); m.computeLineDistances();
-      grp.add(m); lines.push({ mesh: m, orig, buf: new Float32Array(PT*3) });
+      /* A material PER LINE. One shared material cannot crossfade, and the
+       * forged duet's whole idea is that colour walks from one parent to the
+       * other down the field with no seam. ~40 lines, so the extra draw state
+       * costs nothing measurable. */
+      const lm = mat.clone();
+      const m = new THREE.Line2(g, lm); m.computeLineDistances();
+      grp.add(m); lines.push({ mesh: m, mat: lm, orig, buf: new Float32Array(PT*3) });
     }
     /* The token page scales linewidth in CSS pixels against the window. Here
      * the canvas is 1080 tall regardless of the screen, so the weight has to
      * be scaled to that or a render comes out spidery next to the live page. */
     mat.linewidth = 2.5 * (ah / 900);
     mat.resolution.set(aw, ah);
+    for (const l of lines){ l.mat.linewidth = mat.linewidth; l.mat.resolution.set(aw, ah); }
     const th = Math.tan(75 * Math.PI / 360);
     cam.aspect = asp;
     cam.position.set(0, 0, Math.max(hy/th, hx/(th*asp)) * 1.20);
@@ -409,7 +558,9 @@ try {
     fit(seedLabel, Math.round(U * 0.0245));
     cctx.fillText(seedLabel, bx, by + L2);
 
-    const traits = `${p.motif.name}   ${p.tempo} BPM   CHAOS ${p.chaos}   ${p.scheme.name}   ${WAVE_NAMES[p.waveIdx]}`;
+    const traits = pB
+      ? `FORGED   ${p.motif.name} BASS   ${pB.motif.name} TOP   ${p.tempo} BPM   ${p.scheme.name} \u2192 ${pB.scheme.name}`
+      : `${p.motif.name}   ${p.tempo} BPM   CHAOS ${p.chaos}   ${p.scheme.name}   ${WAVE_NAMES[p.waveIdx]}`;
     cctx.globalAlpha = 0.5;
     fit(traits, Math.round(U * 0.019));
     cctx.fillText(traits, bx, by + L3);
@@ -432,15 +583,37 @@ try {
   let fc = 0, flip = 0;
   function frame(t){
     fc++; if (fc >= 7){ fc = 0; flip = 1 - flip; }
-    mat.color.setHex(flip === 0 ? p.scheme.color1 : p.scheme.color2);
     bassFlash *= 0.88;
     const CGV = CG[p.chaos], OCT = CO[p.chaos], WF = WAVES[p.waveIdx];
+    /*  HORIZON. One field, but the terrain at one end belongs to one parent and
+     *  the other end to the other, crossfading through the middle so there is no
+     *  seam. Colour walks with it. Earlier two-parent pictures put the parents
+     *  side by side and read as two artworks sharing a frame; this does not.
+     *
+     *  Each parent shows ITS OWN colour for the current flash, not the inverted
+     *  one. Inverting B looks fine until the two palettes are inverses of each
+     *  other - Plasma is magenta/cyan and Classic Sunken is cyan/magenta, so
+     *  both ends landed on the same colour every frame and the crossfade
+     *  vanished. Same index always shows two parents. */
+    const bCGV = pB ? CG[pB.chaos] : 0, bOCT = pB ? CO[pB.chaos] : 0,
+          bWF  = pB ? WAVES[pB.waveIdx] : null;
+    const cA = flip === 0 ? p.scheme.color1 : p.scheme.color2;
+    const cB = pB ? (flip === 0 ? pB.scheme.color1 : pB.scheme.color2) : 0;
+    if (!pB) mat.color.setHex(cA);
+    const span = Math.max(1, lines.length - 1);
     for (let i = 0; i < lines.length; i++){
       const Ln = lines[i], o = Ln.orig, b = Ln.buf;
+      const bt = pB ? i / span : 0;
+      Ln.mat.color.setHex(pB ? mixHex(cA, cB, bt) : cA);
       for (let j = 0; j < o.length; j++){
         const q = o[j], d = Math.sqrt(q.x*q.x + q.y*q.y);
         let z = WF(q.x, q.y, t) * 0.22;
         if (CGV > 0) z += fn2(q.x, q.y, t, OCT) * CGV;
+        if (pB){
+          let zb = bWF(q.x, q.y, t) * 0.22;
+          if (bCGV > 0) zb += fn2(q.x, q.y, t, bOCT) * bCGV;
+          z = z * (1 - bt) + zb * bt;
+        }
         z += ripAt(d, t);
         b[j*3] = q.x; b[j*3+1] = q.y; b[j*3+2] = z;
       }
@@ -475,43 +648,261 @@ try {
     }
   }
 
+  /*  One input -> one address to compose from, plus the label the card shows.
+   *  A token number is looked up on chain and comes back wearing its real name;
+   *  an ENS is resolved only to find its address and is never replaced by the
+   *  hex it points at. Throws something sayable rather than returning a quiet
+   *  null, because two of these run back to back for a duet. */
+  async function resolveInput(raw){
+    const asToken = raw.replace(/^#/, "");
+    if (/^\d{1,4}$/.test(asToken) && +asToken >= 1 && +asToken <= 1000){
+      /*  The index already holds this token's seed, so a number needs no chain
+       *  call either. It falls back to the contract when the file is absent. */
+      const hit = TOKENS && TOKENS.find(t => t.i === +asToken);
+      if (hit) return { addr: hit.s, label: hit.n, id: hit.i, rare: !!hit.r };
+      let got;
+      try { got = await tokenPiece(+asToken); }
+      catch (e){ throw new Error("could not read token " + asToken + ": " + e.message); }
+      return { addr: got.seed, label: got.name, id: +asToken };
+    }
+    /*  A NAME. Checked before ENS, because a piece called something with a dot
+     *  in it must not be sent to the ENS registry. */
+    const named = findByName(raw);
+    if (named) return { addr: named.s, label: named.n, id: named.i, rare: !!named.r };
+    if (/^0x[0-9a-fA-F]{8,64}$/.test(raw)) return { addr: raw.toLowerCase(), label: raw };
+    if (raw.includes(".")){
+      let got;
+      try { got = await resolveENS(raw); }
+      catch (e){ throw new Error("could not reach the chain to resolve that name: " + e.message); }
+      if (!got) throw new Error(raw + " does not resolve to an address");
+      return { addr: got.toLowerCase(), label: raw };
+    }
+    if (TOKENS_FAILED)
+      throw new Error(`could not load the piece list, so names are unavailable \u2014 reload the page, or use the number instead of "${raw}"`);
+    throw new Error("not a token number, ENS name, wallet or 0x hash: " + raw);
+  }
+
+  /*  INGREDIENT CHIP. A small still of one piece's own field, in its own
+   *  colours, so the forge shows what is going IN and not only what comes out.
+   *  Drawn in 2D at t=0 rather than as another three.js scene - three live
+   *  scenes to decorate a sidebar is a lot of GPU for a thumbnail. */
+  function chipDraw(cv, pp){
+    const g = cv.getContext("2d"), W = cv.width, H = cv.height;
+    g.fillStyle = "#" + pp.scheme.bgColor.toString(16).padStart(6, "0");
+    g.fillRect(0, 0, W, H);
+    const WF = WAVES[pp.waveIdx], CGV = CG[pp.chaos], OCT = CO[pp.chaos];
+    const NLc = 26, PTc = 34, SPc = 1.15;
+    g.lineWidth = 1; g.globalAlpha = 0.85;
+    for (let li = 0; li < NLc; li++){
+      g.strokeStyle = "#" + (li % 8 < 4 ? pp.scheme.color1 : pp.scheme.color2)
+        .toString(16).padStart(6, "0");
+      g.beginPath();
+      for (let pi = 0; pi < PTc; pi++){
+        const x = (pi - PTc/2) * SPc, y = (li - NLc/2) * SPc;
+        let z = WF(x, y, 0) * 0.22;
+        if (CGV > 0) z += fn2(x, y, 0, OCT) * CGV;
+        const sx = (pi / (PTc - 1)) * W;
+        const sy = (li / (NLc - 1)) * (H * 0.78) + H * 0.11 - z * (H * 0.055);
+        pi ? g.lineTo(sx, sy) : g.moveTo(sx, sy);
+      }
+      g.stroke();
+    }
+    g.globalAlpha = 1;
+  }
+  function showIngredient(id, got, pp, rare){
+    const box = $(id); if (!box) return;
+    box.hidden = false;
+    chipDraw(box.querySelector("canvas"), pp);
+    /*  Say when a piece is a moment. Somebody looking at the forge needs to
+     *  know WHY it was refused, not just that it was. */
+    box.querySelector("b").innerHTML = (rare ? '<span class=rare>MOMENT</span> ' : "")
+      + got.label.replace(/[<&]/g, c => c === "<" ? "&lt;" : "&amp;");
+    /*  .tr, not "span". The rare badge is a span injected INSIDE <b>, so a bare
+     *  querySelector("span") found the badge and wrote the traits into it -
+     *  leaving the real trait line showing the PREVIOUS piece's values. A chip
+     *  that displays one piece's name beside another's traits is the same
+     *  mislabelling the render card already had once. */
+    box.querySelector(".tr").innerHTML =
+      `${pp.motif.name} \u00b7 ${pp.tempo} bpm \u00b7 chaos ${pp.chaos}<br>` +
+      `${pp.scheme.name} \u00b7 ${WAVE_NAMES[pp.waveIdx]}`;
+  }
+
+  /*  WHICH PAGE THIS IS.
+   *
+   *  Rendering your own piece and forging two into a third are separate pages,
+   *  not tabs. They were tabs for one build and it was wrong: the forge needs
+   *  two inputs, two ingredient panels and a result panel, and stacking that
+   *  behind a tab on a panel that was already full pushed the COMPOSE button
+   *  off the bottom of the screen. Two jobs, two pages, one engine.
+   *
+   *  The page announces itself by having the forge's second input. No flag, no
+   *  query string, nothing to keep in sync. */
+  const MODE = $("seedA") ? "duet" : "one";
+
+  /*  Which forge box a tapped wallet piece lands in. Tracks the last box the
+   *  person actually touched, so tapping fills the one they are looking at. */
+  let lastBox = "seedA";
+  if (MODE === "duet"){
+    $("seedA").addEventListener("focus", () => { lastBox = "seedA"; });
+    $("seedB").addEventListener("focus", () => { lastBox = "seedB"; });
+  }
+
+  /*  CONNECT WALLET, read only.
+   *
+   *  This asks for the account and nothing else. It never requests a signature
+   *  and never sends a transaction - there is nothing here to sign. The token
+   *  contract has no enumeration, so ownership is found by asking ownerOf
+   *  across the supply in batches. */
+  let OWNED = [];
+  async function batchOwners(url, ids){
+    const sel = selector("ownerOf(uint256)");
+    const body = ids.map((id, i) => ({ jsonrpc: "2.0", id: i, method: "eth_call",
+      params: [{ to: AUDIOMAPS, data: "0x" + sel + BigInt(id).toString(16).padStart(64, "0") }, "latest"] }));
+    const r = await fetch(url, { method: "POST",
+      headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
+    if (!r.ok) throw new Error("rpc " + r.status);
+    const j = await r.json();
+    const out = new Array(ids.length).fill(null);
+    for (const row of j) if (!row.error && row.result) out[row.id] = "0x" + row.result.slice(-40);
+    return out;
+  }
+  $("connect").onclick = async () => {
+    if (!window.ethereum){ say("no wallet in this browser \u2014 type a name or number instead"); return; }
+    let acct;
+    try {
+      const got = await window.ethereum.request({ method: "eth_requestAccounts" });
+      acct = (got && got[0] || "").toLowerCase();
+    } catch (e){ say("wallet not connected"); return; }
+    if (!acct){ say("wallet not connected"); return; }
+    await loadTokens();
+    $("connect").disabled = true;
+    $("connect").textContent = acct.slice(0, 6) + "\u2026" + acct.slice(-4);
+    say("looking through the collection for your pieces\u2026");
+    const ids = TOKENS.length ? TOKENS.map(t => t.i) : Array.from({length:1000}, (_,i) => i+1);
+    const mine = [];
+    let url = null;
+    for (const u of RPCS){ try { await batchOwners(u, [1]); url = u; break; } catch (e){} }
+    if (!url){ say("no endpoint would answer \u2014 type a name or number instead");
+               $("connect").disabled = false; $("connect").textContent = "CONNECT WALLET"; return; }
+    try {
+      for (let i = 0; i < ids.length; i += 50){
+        const slice = ids.slice(i, i + 50);
+        const owners = await batchOwners(url, slice);
+        owners.forEach((o, k) => { if (o === acct) mine.push(slice[k]); });
+        say(`checked ${Math.min(i+50, ids.length)} of ${ids.length}\u2026 ${mine.length} found`);
+      }
+    } catch (e){
+      say("could not finish reading ownership: " + e.message);
+      $("connect").disabled = false; $("connect").textContent = "CONNECT WALLET"; return;
+    }
+    OWNED = mine;
+    const box = $("owned"); box.innerHTML = "";
+    if (!mine.length){ say("that wallet holds no Audio Maps"); $("walletHint").hidden = true; return; }
+    for (const id of mine){
+      const t = TOKENS.find(x => x.i === id);
+      const b = document.createElement("button");
+      b.textContent = (t && t.r ? "\u25c6 " : "") + (t ? t.n : "#" + id);
+      b.title = t && t.r ? "#" + id + " - a moment, cannot be forged" : "#" + id;
+      if (t && t.r) b.classList.add("rareChip");
+      b.onclick = () => {
+        const target = MODE === "duet" ? lastBox : "seed";
+        $(target).value = t ? t.n : String(id);
+        if (MODE === "duet") lastBox = lastBox === "seedA" ? "seedB" : "seedA";
+      };
+      box.appendChild(b);
+    }
+    $("walletHint").hidden = false;
+    $("walletHint").textContent = MODE === "duet"
+      ? "Tap a piece to load it into whichever box you used last."
+      : "Tap a piece to render it.";
+    say(`${mine.length} piece${mine.length === 1 ? "" : "s"} in that wallet. Tap one to load it.`);
+  };
+
+  /*  Swap the parents. Not cosmetic - A gives the bass, so this is genuinely a
+   *  different piece and the quickest way to hear that for yourself. */
+  if ($("swapAB")) $("swapAB").onclick = () => {
+    const a = $("seedA").value; $("seedA").value = $("seedB").value; $("seedB").value = a;
+    compose();
+  };
+
   // ── compose ─────────────────────────────────────────────────────────────
   let timer = null;
   async function compose(){
-    const raw = $("seed").value.trim();
-    if (!raw){ say("type an ENS name or a wallet address"); return; }
+    await loadTokens();
 
-    /* One field, either kind of input. What they typed is what the card says —
-     * an ENS is resolved only to find the address to compose from, and the
-     * name itself is never replaced with the hex it points at. */
-    seedLabel = raw;
-    /* Any hex seed, not just a 20-byte address. The engine takes a hash and
-     * does not care how long it is, so a 32-byte BLOCK hash composes perfectly
-     * well — the genesis block is a piece. Requiring exactly 40 characters was
-     * the tool being narrower than the thing it drives. */
-    /*  A bare number is a TOKEN, not a seed. 1 to 1000, with or without a #. */
-    const asToken = raw.replace(/^#/, "");
-    if (/^\d{1,4}$/.test(asToken) && +asToken >= 1 && +asToken <= 1000){
-      say(`reading token ${asToken} off the chain…`);
-      let got;
-      try { got = await tokenPiece(+asToken); }
-      catch (e){ say("could not read token " + asToken + ": " + e.message); return; }
-      seedAddr = got.seed;
-      seedLabel = got.name;                            // the card says its real name
-    } else if (/^0x[0-9a-fA-F]{8,64}$/.test(raw)){
-      seedAddr = raw.toLowerCase();                    // casing changes the art
-    } else if (raw.includes(".")){
-      say(`resolving ${raw}…`);
-      let got;
-      try { got = await resolveENS(raw); }
-      catch (e){ say("could not reach the chain to resolve that name: " + e.message); return; }
-      if (!got){ say(`${raw} does not resolve to an address`); return; }
-      seedAddr = got.toLowerCase();
-    } else {
-      say("type a token number, an ENS name, a wallet, or a 0x hash");
+    /*  Which tab is open decides what is being made. No parsing of the single
+     *  field into two - the forge has its own pair of inputs, because that is
+     *  what the thing actually is: two pieces going in. */
+    if (MODE === "duet"){
+      const ra = $("seedA").value.trim(), rb = $("seedB").value.trim();
+      if (!ra || !rb){ say("the forge needs two pieces"); return; }
+      say("looking both up\u2026");
+      let A, B;
+      try { A = await resolveInput(ra); B = await resolveInput(rb); }
+      catch (e){ say(e.message); return; }
+      if (A.addr === B.addr){ say("a piece cannot duet with itself \u2014 pick two different pieces"); return; }
+      /*  A RARE IS NOT AN INGREDIENT.
+       *
+       *  The 52 moments are the pieces Ethereum already contained, and the
+       *  forge consumes what goes into it. Burning one would destroy something
+       *  that cannot be minted again, so the contract will not permit it and
+       *  this preview must not imply otherwise.
+       *
+       *  This page shipped for one build with a rare as its DEFAULT example -
+       *  Etheria sitting in the A box, being forged, on the page that teaches
+       *  people what the forge does. A preview that demonstrates the forbidden
+       *  thing is worse than no preview. */
+      const bad = [A, B].filter(x => x.rare);
+      if (bad.length){
+        say(bad.length === 2
+          ? `${A.label} and ${B.label} are both moments \u2014 rares cannot be forged, they would be destroyed`
+          : `${bad[0].label} is one of the 52 moments \u2014 rares cannot be forged, they would be destroyed`);
+        showIngredient("ingA", A, AM125.derive(A.addr), A.rare);
+        showIngredient("ingB", B, AM125.derive(B.addr), B.rare);
+        $("forgedName").textContent = "\u2014";
+        $("forgedTraits").textContent = "A moment cannot go into the forge.";
+        return;
+      }
+      seedAddr = A.addr; seedLabel = A.label + "  \u00d7  " + B.label;
+      p = AM125.derive(A.addr); pB = AM125.derive(B.addr);
+      showIngredient("ingA", A, p, A.rare); showIngredient("ingB", B, pB, B.rare);
+      $("forgedName").textContent = A.label + " \u00d7 " + B.label;
+      $("forgedTraits").innerHTML =
+        `${p.motif.name} bass over ${pB.motif.name} top<br>${p.tempo} bpm \u00b7 ` +
+        `${p.scheme.name} \u2192 ${pB.scheme.name}`;
+      bgMesh.material.color.setHex(p.scheme.bgColor);
+      layout();
+      rip.length = 0; bassFlash = 0;
+      if (!timer){ t0 = performance.now(); timer = setInterval(() => frame(performance.now() - t0), 16); }
+      if (part){ part.dispose(); part = null; Tone.Transport.stop(); Tone.Transport.cancel(); }
+      say(`FORGED \u2014 ${p.motif.name} bass \u00b7 ${pB.motif.name} top \u00b7 ${p.tempo} bpm \u00b7 ${p.scheme.name} into ${pB.scheme.name}`);
+      $("rec").disabled = !canRecord;
+      $("saverow").hidden = true;
+      $("loopsec").textContent = loopSeconds().toFixed(1);
       return;
     }
+    pB = null;
+    const raw = $("seed").value.trim();
+    if (!raw){ say("type a piece name or number"); return; }
+
+    /*  ONE resolver for both tabs, so a piece name works everywhere a number
+     *  does. It used to be duplicated here and understood only numbers, ENS and
+     *  hex - typing a piece NAME fell through to the error branch and returned.
+     *
+     *  ⚠ AND THE LABEL WAS ALREADY SET. seedLabel was assigned from the raw
+     *  text BEFORE resolution, so bailing out left the previous artwork on
+     *  screen wearing the name that had just been typed: LATE SWARM printed
+     *  over Etheria's picture, traits and all. Somebody would have screenshot
+     *  that and posted the wrong piece under the wrong name.
+     *
+     *  Nothing is labelled until it has resolved. */
+    let got;
+    try { got = await resolveInput(raw); }
+    catch (e){ say(e.message); return; }
+    seedAddr = got.addr;
+    seedLabel = got.label;
     p = AM125.derive(seedAddr);
+    showIngredient("ingOne", { label: seedLabel }, p, got.rare);
     bgMesh.material.color.setHex(p.scheme.bgColor);
     layout();
     rip.length = 0; bassFlash = 0;
@@ -546,7 +937,7 @@ try {
      *  fold back rather than disappearing. */
     const oct = parseInt(($("oct") && $("oct").value) || "0", 10) || 0;
     const ts = p.transposeSemis + (p.octaveShift + oct) * 12;
-    const ev = p.motif.melody.map(a => {
+    const ev = pB ? duetEvents(p, pB, oct) : p.motif.melody.map(a => {
       let v = a[3] * p.velMul; if (v < 0.05) v = 0.05; if (v > 1) v = 1;
       return { time: a[0], note: shift(a[1], ts), dur: a[2], vel: v };
     });
@@ -681,7 +1072,15 @@ try {
   };
   for (const id of ["fmt","matte"])
     $(id).onchange = () => { if (p) layout(); };
-  $("seed").addEventListener("keydown", e => { if (e.key === "Enter") compose(); });
+  for (const id of ["seed", "seedA", "seedB"])
+    if ($(id)) $(id).addEventListener("keydown", e => { if (e.key === "Enter") compose(); });
+  /*  Load the name index up front so the autocomplete list is populated before
+   *  anybody types, not after their first compose. */
+  loadTokens().then(t => {
+    if (t.length) return;
+    console.warn("tokens.json did not load - numbers still work, name search does not");
+    say("could not load the piece list \u2014 names will not work until you reload. Numbers still do.");
+  });
 
   // The hash implementation is load-bearing for ENS, so it is checked against
   // published vectors at startup rather than trusted.

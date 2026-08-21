@@ -1,0 +1,137 @@
+<!doctype html>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Audio Maps — the forge</title>
+<link rel="stylesheet" href="_shared.css">
+<style>
+/*  The forge gets a WIDER panel than the render card, because it has to show
+    two things going in as well as the one coming out. Cramming that into the
+    render card's column was the mistake this page exists to undo. */
+.panel{width:392px;flex:0 0 392px}
+#card{max-width:calc(100vw - 458px)}
+.parent{border:1px solid var(--line);border-radius:3px;padding:9px 11px;
+ background:rgba(22,22,29,.025)}
+.parent + .parent{margin-top:9px}
+.parent .role{display:flex;justify-content:space-between;align-items:baseline;
+ margin-bottom:5px}
+.parent .role em{font-style:normal;color:var(--dim);letter-spacing:0;
+ text-transform:none;font-size:10px}
+.parent input{margin:0}
+.plus{text-align:center;color:var(--dim);font-size:13px;margin:7px 0;
+ letter-spacing:.3em}
+.arrow{text-align:center;color:var(--dim);font-size:16px;margin:10px 0 8px;
+ letter-spacing:.4em}
+.result{border:1px solid var(--ink);border-radius:3px;padding:11px 13px;
+ background:rgba(22,22,29,.055)}
+.result b{font-size:12.5px;letter-spacing:.02em;display:block;margin:3px 0 2px}
+.result .t{color:var(--dim);font-size:10px;line-height:1.55}
+#swapAB{width:auto;font-size:10px;padding:3px 9px;border-radius:99px;margin-top:7px}
+@media (max-width:900px){ .panel{width:100%;flex:1 1 auto} #card{max-width:100%} }
+</style>
+
+<div class=panel>
+  <h1>THE FORGE</h1>
+  <div class=sub>Two pieces go in. One comes out — the bass of the first under
+  the top line of the second, on one field blended from both.</div>
+  <a class=swap href="index.html">← Just hearing one piece?</a>
+
+  <label>ingredients</label>
+
+  <div class=parent>
+    <div class=role><span>A — gives the bass</span><em id=metaA></em></div>
+    <input id=seedA list=names value="DARK SEIZURE" placeholder="name or number"
+           spellcheck=false autocomplete=off>
+    <div class=ing id=ingA hidden>
+      <canvas width=108 height=108></canvas>
+      <div class=meta><b></b><span class=tr></span></div>
+    </div>
+  </div>
+
+  <div class=plus>+</div>
+
+  <div class=parent>
+    <div class=role><span>B — gives the top line</span><em id=metaB></em></div>
+    <input id=seedB list=names value="EMPTY CEILING" placeholder="name or number"
+           spellcheck=false autocomplete=off>
+    <div class=ing id=ingB hidden>
+      <canvas width=108 height=108></canvas>
+      <div class=meta><b></b><span class=tr></span></div>
+    </div>
+  </div>
+
+  <button id=swapAB>swap A and B</button>
+
+  <div class=arrow>↓</div>
+
+  <div class=result>
+    <div class=role>What they forge</div>
+    <b id=forgedName>—</b>
+    <div class=t id=forgedTraits>Pick two pieces and press compose.</div>
+  </div>
+
+  <button class=go id=go>COMPOSE</button>
+  <div class=two style="margin-top:8px">
+    <button id=play>play</button>
+    <button id=rec disabled>RECORD</button>
+  </div>
+
+  <div id=log>loading…</div>
+  <video id=out controls loop playsinline hidden
+         style="width:100%;margin-top:8px;border-radius:3px"></video>
+  <div class=two id=saverow hidden style="margin-top:6px">
+    <button class=go id=dl style="margin-top:0">DOWNLOAD</button>
+    <button id=share hidden>SHARE</button>
+  </div>
+
+  <button id=connect style="margin-top:12px">CONNECT WALLET</button>
+  <div id=owned></div>
+  <div class=hint id=walletHint hidden></div>
+
+  <div class=two style="margin-top:4px">
+    <div style="flex:1">
+      <label>format</label>
+      <select id=fmt>
+        <option>1:1</option><option selected>4:5</option>
+        <option>9:16</option><option>16:9</option>
+      </select>
+    </div>
+    <div style="flex:1">
+      <label>matte</label>
+      <select id=matte><option value=paper selected>paper</option>
+        <option value=ink>ink</option></select>
+    </div>
+    <div style="flex:0 0 78px">
+      <label>loops</label>
+      <select id=loops><option>1</option><option selected>2</option>
+        <option>3</option><option>4</option></select>
+    </div>
+  </div>
+
+  <label>octave — a performance control, neither token is changed</label>
+  <select id=oct>
+    <option value="-1">one octave lower</option>
+    <option value="0" selected>as composed</option>
+    <option value="1">one octave higher</option>
+  </select>
+
+  <div class=note>
+    <b>Order matters.</b> A gives the bass, so swapping them makes a different
+    piece, not the same one backwards.<br><br>
+    How much each parent is heard depends on the pair. Both are always present,
+    but where A is a long-note piece its bass arrives as one sustained note a
+    bar rather than a moving line.<br><br>
+    <b>Moments cannot be forged.</b> The 52 rares can be rendered and heard like
+    any other piece, but the forge consumes what goes into it and a moment
+    cannot be minted again. This page refuses them.<br><br>
+    <b>This is a preview.</b> Nothing is burned and nothing is minted here — the
+    forge contract does not exist yet.<br><br>
+    One loop is <span id=loopsec>—</span>s. Recording plays in real time; leave
+    the tab in front.
+  </div>
+</div>
+
+<datalist id=names></datalist>
+<canvas id=card width=1080 height=1350></canvas>
+
+<script src="assets.js"></script>
+<script src="boot.js"></script>
