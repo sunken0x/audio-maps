@@ -89,9 +89,14 @@ const FORMATS = {
   "16:9": [1920, 1080]
 };
 const COLLECTION = "AUDIOMAPS";
+/*  The matte is the CARD, not the artwork. The picture's own background comes
+ *  from the seed (p.scheme.bgColor) and is never touched here, so a piece
+ *  rendered on any matte is still the true piece. Recolouring the artwork
+ *  itself would be showing a token that does not exist. */
 const MATTES = {
   paper: { bg: "#efece4", ink: "#16161d", rule: "rgba(22,22,29,0.30)" },
-  ink:   { bg: "#0c0c11", ink: "#e8e5dd", rule: "rgba(232,229,221,0.28)" }
+  ink:   { bg: "#0c0c11", ink: "#e8e5dd", rule: "rgba(232,229,221,0.28)" },
+  green: { bg: "#00c805", ink: "#04220a", rule: "rgba(4,34,10,0.32)" }
 };
 
 /* Letter-spaced text. ctx.letterSpacing exists in Chrome but not everywhere,
