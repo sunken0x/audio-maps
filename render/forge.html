@@ -7,22 +7,8 @@
 /*  The forge gets a WIDER panel than the render card, because it has to show
     two things going in as well as the one coming out. Cramming that into the
     render card's column was the mistake this page exists to undo. */
-/*  Centered, one column, at every width - the card leads, the controls follow
-    beneath it, like the main page. The side-by-side layout read as lopsided on
-    a full screen. */
-body{flex-direction:column-reverse;align-items:center;justify-content:flex-end;
- padding:14px 16px 40px;gap:12px}
-.panel{width:min(700px,100%);flex:1 1 auto}
-#card{align-self:center;width:auto;height:auto;max-width:min(700px,100%);
- max-height:50vh;object-fit:contain}
-/* the two ingredients sit side by side - half the height, and the connect
-   button lands on screen instead of below it */
-.ingrow{display:flex;gap:8px;align-items:stretch}
-.ingrow .parent{flex:1;margin:0}
-.ingrow .parent + .parent{margin-top:0}
-.ingrow .plus{align-self:center;margin:0}
-.arrow{margin:6px 0 4px}
-@media (max-width:560px){ .ingrow{flex-direction:column} .ingrow .plus{margin:2px 0} }
+.panel{width:392px;flex:0 0 392px}
+#card{max-width:calc(100vw - 458px)}
 .parent{border:1px solid var(--line);border-radius:3px;padding:9px 11px;
  background:rgba(22,22,29,.025)}
 .parent + .parent{margin-top:9px}
@@ -49,13 +35,12 @@ body{flex-direction:column-reverse;align-items:center;justify-content:flex-end;
   the top line of the second, on one field blended from both.</div>
   <a class=swap href="index.html">← Just hearing one piece?</a>
 
-  <button class=go id=connect style="margin-top:8px">CONNECT WALLET</button>
+  <button class=go id=connect style="margin-top:6px">CONNECT WALLET</button>
   <div id=owned></div>
   <div class=hint id=walletHint hidden></div>
 
   <label>ingredients</label>
 
-  <div class=ingrow>
   <div class=parent>
     <div class=role><span>A — gives the bass</span><em id=metaA></em></div>
     <input id=seedA list=names value="DARK SEIZURE" placeholder="name or number"
@@ -76,8 +61,6 @@ body{flex-direction:column-reverse;align-items:center;justify-content:flex-end;
       <canvas width=108 height=108></canvas>
       <div class=meta><b></b><span class=tr></span></div>
     </div>
-  </div>
-
   </div>
 
   <button id=swapAB>swap A and B</button>
