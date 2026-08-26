@@ -687,4 +687,16 @@ function drawCard(){
     console.error(e);
   });
 })();
+
+/* Optional handoff from forge.html: ?a=<seed>&b=<seed> fills both inputs and
+   composes on arrival. With no params this block does nothing at all. */
+(function(){
+  try {
+    const q = new URLSearchParams(location.search);
+    const a = q.get("a"), b = q.get("b");
+    if (a) $("a").value = a;
+    if (b) $("b").value = b;
+    if (a && b) setTimeout(function(){ try { forge(); } catch(e){} }, 400);
+  } catch(e){}
+})();
 </script>

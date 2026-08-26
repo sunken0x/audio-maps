@@ -1,0 +1,346 @@
+<!doctype html>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>The Forge — Audio Maps</title>
+<style>
+  :root { --bg:#05070d; --ink:#e8e6df; --dim:#8a8880; --line:#1c2230; --pink:#ff6b6b; --ok:#7ddf9a; }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--ink);
+         font:15px/1.55 "SF Mono", ui-monospace, Menlo, monospace; }
+  main { max-width:880px; margin:0 auto; padding:34px 18px 80px; }
+  h1 { font-size:21px; letter-spacing:.14em; margin:0 0 4px; font-weight:600; }
+  .sub { color:var(--dim); margin:0 0 26px; }
+  .strip { display:flex; gap:18px; flex-wrap:wrap; border:1px solid var(--line);
+           padding:10px 14px; margin-bottom:26px; font-size:13px; color:var(--dim); }
+  .strip b { color:var(--ink); font-weight:600; }
+  button { background:none; border:1px solid var(--ink); color:var(--ink);
+           font:inherit; padding:9px 18px; cursor:pointer; letter-spacing:.06em; }
+  button:hover:not(:disabled) { background:var(--ink); color:var(--bg); }
+  button:disabled { opacity:.35; cursor:default; }
+  button.danger { border-color:var(--pink); color:var(--pink); }
+  button.danger:hover:not(:disabled) { background:var(--pink); color:var(--bg); }
+  .chips { display:flex; flex-wrap:wrap; gap:8px; margin:14px 0 6px; }
+  .chip { border:1px solid var(--line); padding:7px 12px; cursor:pointer; font-size:13px; }
+  .chip:hover { border-color:var(--ink); }
+  .chip.sel { border-color:var(--ok); color:var(--ok); }
+  .chip.dead { opacity:.32; cursor:default; text-decoration:line-through; }
+  .chip.rare { opacity:.5; cursor:default; border-style:dashed; }
+  .slots { display:grid; grid-template-columns:1fr 44px 1fr; gap:10px; align-items:center; margin:20px 0; }
+  .slot { border:1px solid var(--line); min-height:74px; padding:12px 14px; }
+  .slot .k { font-size:11px; letter-spacing:.18em; color:var(--dim); }
+  .slot .v { font-size:17px; margin-top:6px; }
+  .swap { text-align:center; }
+  .swap button { padding:6px 10px; border-color:var(--line); }
+  .row { display:flex; gap:12px; flex-wrap:wrap; margin:16px 0; align-items:center; }
+  .note { color:var(--dim); font-size:13px; }
+  .warn { border:1px solid var(--pink); color:var(--pink); padding:12px 14px; margin:14px 0; font-size:13px; }
+  .okbox { border:1px solid var(--ok); color:var(--ok); padding:14px; margin:14px 0; }
+  .okbox a { color:var(--ok); }
+  label.confirm { display:flex; gap:10px; align-items:flex-start; font-size:13px; color:var(--dim); margin:14px 0; cursor:pointer; }
+  #log { font-size:13px; color:var(--dim); white-space:pre-wrap; margin-top:10px; }
+  section.faq { margin-top:56px; border-top:1px solid var(--line); padding-top:26px; }
+  section.faq h2 { font-size:14px; letter-spacing:.18em; color:var(--dim); font-weight:600; }
+  details { border:1px solid var(--line); margin:8px 0; }
+  summary { padding:11px 14px; cursor:pointer; font-size:14px; }
+  details div { padding:0 14px 13px; color:var(--dim); font-size:13.5px; }
+  details a, .foot a, .strip a { color:var(--ink); }
+  .foot { margin-top:44px; color:var(--dim); font-size:12px; line-height:2; }
+  @media (max-width:640px){ .slots { grid-template-columns:1fr; } .swap { order:3; } }
+</style>
+
+<main>
+  <h1>THE FORGE</h1>
+  <p class="sub">Two Audio Maps go in. One comes out. Supply only ever falls.</p>
+
+  <div class="strip" id="strip">loading chain state…</div>
+
+  <div id="gate">
+    <div class="row">
+      <button id="connect">CONNECT WALLET</button>
+      <span class="note">You need two ordinary Audio Maps. Moments and forged pieces cannot go in.</span>
+    </div>
+  </div>
+
+  <div id="app" style="display:none">
+    <div class="note" id="who"></div>
+    <div class="chips" id="chips"></div>
+    <div class="note">Pick two. First pick is the BASS (the low half), second is the TOP (the high half). Order changes the piece.</div>
+
+    <div class="slots">
+      <div class="slot"><div class="k">BASS — the low half · burned</div><div class="v" id="s0">—</div></div>
+      <div class="swap"><button id="swap" title="swap bass and top">⇅</button></div>
+      <div class="slot"><div class="k">TOP — the high half · burned</div><div class="v" id="s1">—</div></div>
+    </div>
+
+    <div class="row">
+      <button id="preview" disabled>HEAR THIS PAIR</button>
+      <span class="note">Opens the duet renderer with your two pieces. Listen before you burn.</span>
+    </div>
+
+    <div class="warn" id="warnbox" style="display:none"></div>
+
+    <label class="confirm" id="confirmrow" style="display:none">
+      <input type="checkbox" id="confirm">
+      <span id="confirmtext"></span>
+    </label>
+
+    <div class="row">
+      <button id="approve" style="display:none">APPROVE THE FORGE</button>
+      <button id="forge" class="danger" disabled>FORGE</button>
+    </div>
+    <div id="log"></div>
+    <div id="result"></div>
+  </div>
+
+  <section class="faq">
+    <h2>QUESTIONS</h2>
+    <details><summary>What does forging cost?</summary>
+      <div>Nothing. The forge takes no payment and the artist earns nothing from it. You pay only the network's gas fee for your own transactions.</div></details>
+    <details><summary>What happens to the two pieces I put in?</summary>
+      <div>They are burned. Permanently. Their token ids are retired, they leave every wallet and every marketplace, and nothing can bring them back. This is the whole point: supply only ever falls.</div></details>
+    <details><summary>What do I get?</summary>
+      <div>HORIZON: one new piece, composed from both. The bass comes from your first piece, the high notes from your second, and the two maps blend into one field split at the horizon line. It is a real Audio Map with a real token id, minted to your wallet in the same transaction that burns the parents.</div></details>
+    <details><summary>Does the order matter?</summary>
+      <div>Yes. Bass and top are different roles. The same two pieces the other way round make a genuinely different artwork. Preview both orders before you burn.</div></details>
+    <details><summary>Why is my rare greyed out?</summary>
+      <div>The 52 moments are pieces of Ethereum's history that were dealt once and can never be minted again. The forge destroys what goes into it, so the contract refuses them outright. This is enforced on chain, not just here.</div></details>
+    <details><summary>Can I forge a HORIZON?</summary>
+      <div>No. A forged piece cannot go back into the forge. The contract refuses it.</div></details>
+    <details><summary>Why did maxSupply change to 1,500?</summary>
+      <div>Contract plumbing, not the collection. Token ids come from a counter that never rewinds even when pieces burn, so forged pieces need id headroom above 1,000. Nobody can mint into that room except the forge, and the forge only shrinks the collection: 1,500 is the ceiling if every single piece were burned two-for-one. The count you see on marketplaces only falls.</div></details>
+    <details><summary>Is the approval safe?</summary>
+      <div>Approving lets the forge contract burn Audio Maps from your wallet — but only inside a forge transaction that you sign, only pieces you chose, and it can do nothing else: the contract has no withdraw, no payment, no owner mint, and its full source is verified on Etherscan. You can revoke the approval any time from your wallet or revoke.cash.</div></details>
+    <details><summary>Can the forge be switched off?</summary>
+      <div>The artist holds exactly one power: closing it, forever. There is no reopen. He cannot mint through it, cannot burn anyone's pieces, and cannot touch what you own.</div></details>
+  </section>
+
+  <div class="foot">
+    forge <a id="fl" target="_blank" rel="noopener"></a><br>
+    collection <a id="cl" target="_blank" rel="noopener"></a><br>
+    every claim above is written in the verified source. read it.
+  </div>
+</main>
+
+<script>
+"use strict";
+/* Addresses */
+const AM    = "0x31E107aFb3e76Ca66f91be62B8b65a1A30ed55d8";
+const FORGE = "0x45Ac3a8da7cd547185Cba257DC2c0622a78F29dE";
+const RPC   = "https://ethereum-rpc.publicnode.com";
+
+/* Selectors — generated with `cast sig`, never hand-typed (house rule). */
+const SEL = {
+  ownerOf:          "0x6352211e",
+  seedOf:           "0x82829f74",
+  isRare:           "0x1fe09da3",
+  momentTitleOf:    "0xbbf651cf",
+  totalSupply:      "0x18160ddd",
+  totalMinted:      "0xa2309ff8",
+  maxSupply:        "0xd5abeb01",
+  isApprovedForAll: "0xe985e9c5",
+  setApprovalForAll:"0xa22cb465",
+  forge:            "0xef0b8784",
+  open:             "0xfcfff16f",
+  isForged:         "0xf843dea6",
+  forgedCount:      "0x646eee57"
+};
+/* keccak("Forged(uint256,uint256,uint256,address)") via `cast keccak` */
+const FORGED_TOPIC = "0xb0817a0583084fa2741dc20361dc99f3d4c17fb17fd97eccc007856cc28ede8a";
+
+const $ = id => document.getElementById(id);
+const pad = (v) => BigInt(v).toString(16).padStart(64, "0");
+const padAddr = (a) => a.toLowerCase().replace("0x","").padStart(64, "0");
+
+let rpcId = 1;
+async function rpcBatch(calls){ /* [{to,data}] -> [hexResult|null] */
+  const body = calls.map(c => ({jsonrpc:"2.0", id:rpcId++, method:"eth_call", params:[{to:c.to, data:c.data},"latest"]}));
+  const r = await fetch(RPC, {method:"POST", headers:{"content-type":"application/json"}, body:JSON.stringify(body)});
+  const j = await r.json();
+  const byId = {}; (Array.isArray(j)?j:[j]).forEach(x => byId[x.id] = x);
+  return body.map(b => (byId[b.id] && byId[b.id].result) ? byId[b.id].result : null);
+}
+async function call(to, data){ return (await rpcBatch([{to, data}]))[0]; }
+
+/* state */
+let account = null, owned = [], picked = [], approved = false, forgeOpen = true, minted = 0, cap = 0;
+
+async function loadStrip(){
+  const [o, ts, tm, ms, fc] = await rpcBatch([
+    {to:FORGE, data:SEL.open}, {to:AM, data:SEL.totalSupply}, {to:AM, data:SEL.totalMinted},
+    {to:AM, data:SEL.maxSupply}, {to:FORGE, data:SEL.forgedCount}
+  ]);
+  forgeOpen = o ? BigInt(o) === 1n : false;
+  minted = tm ? Number(BigInt(tm)) : 0;
+  cap = ms ? Number(BigInt(ms)) : 0;
+  const supply = ts ? Number(BigInt(ts)) : 0;
+  const duets = fc ? Number(BigInt(fc)) : 0;
+  const room = cap > minted;
+  $("strip").innerHTML =
+    "<span>forge <b>" + (forgeOpen ? (room ? "OPEN" : "AT CAP") : "CLOSED FOREVER") + "</b></span>" +
+    "<span>pieces existing <b>" + supply + "</b></span>" +
+    "<span>duets forged <b>" + duets + "</b></span>" +
+    "<span><a href='https://etherscan.io/address/" + FORGE + "#code' target='_blank' rel='noopener'>verified contract ↗</a></span>";
+  $("fl").textContent = FORGE; $("fl").href = "https://etherscan.io/address/" + FORGE + "#code";
+  $("cl").textContent = AM;    $("cl").href = "https://etherscan.io/address/" + AM;
+}
+
+async function connect(){
+  if (!window.ethereum){ alert("No wallet found. Open this page in a browser with MetaMask or a similar wallet."); return; }
+  const accs = await window.ethereum.request({method:"eth_requestAccounts"});
+  account = accs[0];
+  const chain = await window.ethereum.request({method:"eth_chainId"});
+  if (chain !== "0x1"){
+    try { await window.ethereum.request({method:"wallet_switchEthereumChain", params:[{chainId:"0x1"}]}); }
+    catch(e){ alert("Switch your wallet to Ethereum mainnet."); return; }
+  }
+  $("gate").style.display = "none"; $("app").style.display = "block";
+  $("who").textContent = "connected " + account.slice(0,6) + "…" + account.slice(-4) + " · finding your pieces…";
+  await scan();
+}
+
+async function scan(){
+  /* who owns what: batch ownerOf over every id ever minted (burned ids error out) */
+  const N = Math.min(minted || 1000, 4000);
+  const mine = [];
+  for (let start = 1; start <= N; start += 200){
+    const ids = []; for (let i = start; i <= Math.min(start+199, N); i++) ids.push(i);
+    const res = await rpcBatch(ids.map(i => ({to:AM, data:SEL.ownerOf + pad(i)})));
+    res.forEach((r, k) => {
+      if (r && ("0x" + r.slice(-40)).toLowerCase() === account.toLowerCase()) mine.push(ids[k]);
+    });
+  }
+  /* eligibility + seeds, batched */
+  const meta = await rpcBatch(mine.flatMap(i => ([
+    {to:AM, data:SEL.isRare + pad(i)},
+    {to:FORGE, data:SEL.isForged + pad(i)},
+    {to:AM, data:SEL.seedOf + pad(i)}
+  ])));
+  owned = mine.map((id, k) => ({
+    id,
+    rare:   meta[k*3]   ? BigInt(meta[k*3]) === 1n : false,
+    forged: meta[k*3+1] ? BigInt(meta[k*3+1]) === 1n : false,
+    seed:   meta[k*3+2] ? meta[k*3+2].toLowerCase() : null
+  }));
+  $("who").textContent = "connected " + account.slice(0,6) + "…" + account.slice(-4) +
+    " · " + owned.length + " piece" + (owned.length === 1 ? "" : "s");
+  approved = false;
+  const ap = await call(AM, SEL.isApprovedForAll + padAddr(account) + padAddr(FORGE));
+  approved = ap ? BigInt(ap) === 1n : false;
+  renderChips(); renderState();
+}
+
+function renderChips(){
+  $("chips").innerHTML = owned.map((t, i) => {
+    const cls = t.rare ? "chip rare" : (t.forged ? "chip" : "chip") ;
+    const dead = t.rare;
+    const sel = picked.includes(i) ? " sel" : "";
+    const tag = t.rare ? " · MOMENT" : (t.forged ? " · HORIZON" : "");
+    return "<span class='chip" + (dead ? " rare" : sel) + "' data-i='" + i + "'" +
+      (t.rare ? " title='moments cannot be forged'" : "") + ">#" + t.id + tag + "</span>";
+  }).join("");
+  document.querySelectorAll(".chip").forEach(el => {
+    el.onclick = () => {
+      const i = +el.dataset.i;
+      if (owned[i].rare) return;
+      const at = picked.indexOf(i);
+      if (at >= 0) picked.splice(at, 1);
+      else { if (picked.length === 2) picked.shift(); picked.push(i); }
+      renderChips(); renderState();
+    };
+  });
+}
+
+function renderState(){
+  const [a, b] = picked;
+  $("s0").textContent = a !== undefined ? "#" + owned[a].id : "—";
+  $("s1").textContent = b !== undefined ? "#" + owned[b].id : "—";
+  const ready = a !== undefined && b !== undefined;
+  $("preview").disabled = !ready;
+  $("warnbox").style.display = "none";
+  $("confirmrow").style.display = "none";
+  $("approve").style.display = "none";
+  $("forge").disabled = true;
+  $("confirm").checked = false;
+  if (!ready) return;
+  const A = owned[a], B = owned[b];
+  if (A.forged || B.forged){
+    $("warnbox").style.display = "block";
+    $("warnbox").textContent = "A HORIZON cannot go back into the forge. The contract will refuse it.";
+    return;
+  }
+  if (!forgeOpen){
+    $("warnbox").style.display = "block";
+    $("warnbox").textContent = "The forge is closed. Nothing can be forged.";
+    return;
+  }
+  $("confirmrow").style.display = "flex";
+  $("confirmtext").textContent = "I understand that #" + A.id + " and #" + B.id +
+    " will be burned permanently and cannot be recovered. Two pieces become one.";
+  if (!approved) $("approve").style.display = "inline-block";
+  $("confirm").onchange = () => { $("forge").disabled = !$("confirm").checked || !approved; };
+  $("forge").disabled = true;
+}
+
+$("preview").onclick = () => {
+  const [a, b] = picked;
+  if (a === undefined || b === undefined) return;
+  window.open("duet.html?a=" + owned[a].seed + "&b=" + owned[b].seed, "_blank");
+};
+
+$("swap").onclick = () => { if (picked.length === 2) { picked.reverse(); renderChips(); renderState(); } };
+
+async function sendTx(to, data, label){
+  $("log").textContent = label + " — confirm in your wallet…";
+  const hash = await window.ethereum.request({
+    method:"eth_sendTransaction", params:[{from:account, to, data}]
+  });
+  $("log").textContent = label + " — sent " + hash.slice(0,14) + "… waiting for the chain…";
+  for (let i = 0; i < 120; i++){
+    await new Promise(r => setTimeout(r, 4000));
+    const r = await fetch(RPC, {method:"POST", headers:{"content-type":"application/json"},
+      body:JSON.stringify({jsonrpc:"2.0", id:rpcId++, method:"eth_getTransactionReceipt", params:[hash]})});
+    const j = await r.json();
+    if (j.result){
+      if (j.result.status !== "0x1") throw new Error(label + " transaction failed on chain");
+      $("log").textContent = label + " — confirmed";
+      return j.result;
+    }
+  }
+  throw new Error("timed out waiting for the transaction");
+}
+
+$("approve").onclick = async () => {
+  try {
+    $("approve").disabled = true;
+    await sendTx(AM, SEL.setApprovalForAll + padAddr(FORGE) + pad(1), "approval");
+    approved = true; renderState();
+    $("log").textContent = "approved — the forge may now burn only what you choose, in transactions you sign";
+  } catch(e){ $("log").textContent = String(e.message || e); }
+  finally { $("approve").disabled = false; }
+};
+
+$("forge").onclick = async () => {
+  const [a, b] = picked;
+  if (a === undefined || b === undefined || !$("confirm").checked) return;
+  const A = owned[a], B = owned[b];
+  try {
+    $("forge").disabled = true;
+    const rec = await sendTx(FORGE, SEL.forge + pad(A.id) + pad(B.id), "forge");
+    const log = (rec.logs || []).find(l =>
+      l.address.toLowerCase() === FORGE.toLowerCase() && l.topics[0] === FORGED_TOPIC);
+    const newId = log ? Number(BigInt(log.topics[1])) : null;
+    $("result").innerHTML = "<div class='okbox'>FORGED. #" + A.id + " and #" + B.id +
+      " are gone. <b>HORIZON #" + newId + "</b> is yours.<br>" +
+      "<a target='_blank' rel='noopener' href='https://opensea.io/assets/ethereum/" + AM + "/" + newId + "'>see it on OpenSea ↗</a></div>";
+    picked = [];
+    await loadStrip(); await scan();
+  } catch(e){
+    $("log").textContent = String(e.message || e);
+    $("forge").disabled = false;
+  }
+};
+
+$("connect").onclick = () => connect().catch(e => { $("strip").textContent = String(e.message || e); });
+
+loadStrip().catch(() => { $("strip").textContent = "could not reach Ethereum — refresh to retry"; });
+</script>
