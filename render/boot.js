@@ -794,11 +794,22 @@ try {
     if (!url){ say("no endpoint would answer \u2014 type a name or number instead");
                $("connect").disabled = false; $("connect").textContent = "CONNECT WALLET"; return; }
     try {
+      /*  One endpoint rate-limits partway through twenty rapid batches, and
+       *  aborting there threw the whole connection away. So: rotate endpoints
+       *  on failure, retry, and breathe between batches. */
+      let ui = Math.max(0, RPCS.indexOf(url));
       for (let i = 0; i < ids.length; i += 50){
         const slice = ids.slice(i, i + 50);
-        const owners = await batchOwners(url, slice);
+        let owners = null, lastErr = null;
+        for (let t = 0; t < RPCS.length * 2 && !owners; t++){
+          try { owners = await batchOwners(RPCS[ui], slice); }
+          catch (e){ lastErr = e; ui = (ui + 1) % RPCS.length;
+                     await new Promise(r => setTimeout(r, 400)); }
+        }
+        if (!owners) throw lastErr || new Error("no endpoint would answer");
         owners.forEach((o, k) => { if (o === acct) mine.push(slice[k]); });
         say(`checked ${Math.min(i+50, ids.length)} of ${ids.length}\u2026 ${mine.length} found`);
+        await new Promise(r => setTimeout(r, 150));
       }
     } catch (e){
       say("could not finish reading ownership: " + e.message);
