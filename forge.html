@@ -42,7 +42,7 @@
   .demo h2 { margin:0 0 4px; font-size:12px; letter-spacing:4px; font-weight:600;
              text-transform:uppercase; }
   #stage { margin-top:18px; display:none; }
-  #duetframe { display:block; margin:0 auto; width:min(460px,100%); aspect-ratio:4/5.6;
+  #duetframe { display:block; margin:0 auto; width:100%; aspect-ratio:16/10.2;
                border:0; background:transparent; }
   #popout { display:inline-block; margin-top:8px; font-size:11px; color:var(--mute); }
   .chips { display:flex; flex-wrap:wrap; gap:8px; margin:14px 0 6px; }
@@ -92,6 +92,7 @@
       <input id="db" type="number" min="1" placeholder="top #">
       <button id="hear">HEAR IT</button>
       <button id="roll">ROLL A PAIR</button>
+      <button id="dswap" title="swap bass and top">&#8645; SWAP</button>
     </div>
     <div class="note" id="demonote"></div>
     <div id="stage">
@@ -347,10 +348,12 @@ async function demoPair(a, b){
     return false;
   }
   const rare = (res[2] && BigInt(res[2]) === 1n) ? a : ((res[3] && BigInt(res[3]) === 1n) ? b : 0);
-  $("demonote").textContent = rare
+  const doneNote = rare
     ? "#" + rare + " is a moment — you can hear it, but the forge will never take it."
     : "#" + a + " gives the bass, #" + b + " gives the top. Press play inside the frame.";
+  $("demonote").textContent = "composing the duet…";
   showPair(res[0].toLowerCase(), res[1].toLowerCase());
+  $("duetframe").onload = () => setTimeout(() => { $("demonote").textContent = doneNote; }, 700);
   return true;
 }
 
@@ -359,6 +362,12 @@ $("hear").onclick = async () => {
   if (!a || !b){ $("demonote").textContent = "enter two piece numbers"; return; }
   if (a === b){ $("demonote").textContent = "two different pieces — the forge refuses a piece and itself"; return; }
   await demoPair(a, b);
+};
+
+$("dswap").onclick = async () => {
+  const a = $("da").value, b = $("db").value;
+  $("da").value = b; $("db").value = a;
+  if (a && b && a !== b) await demoPair(+b, +a);
 };
 
 $("roll").onclick = async () => {

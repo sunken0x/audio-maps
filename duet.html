@@ -703,8 +703,10 @@ function drawCard(){
         "#hud > #playbtn,#hud > #stopbtn,#hud > #pos{display:inline-block!important}" +
         "#title{display:none!important}" +
         "html,body{background:transparent!important}" +
-        "#hud{background:none!important}";
+        "#hud{background:none!important}" +
+        "#cardcv{top:52px!important;height:calc(100vh - 62px)!important}";
       document.head.appendChild(st);
+      try { $("fmt").value = "16:9"; } catch(e){}
     }
     if (a && b) setTimeout(function(){ try { forge(); } catch(e){} }, 400);
   } catch(e){}
