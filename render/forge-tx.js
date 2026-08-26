@@ -197,8 +197,8 @@
    *  piece they made, what it cost, where it lives. */
   function celebrate(A, B, id){
     var ov = document.createElement("div");
-    ov.style.cssText = "position:fixed;inset:0;z-index:99;background:rgba(239,236,228,.98);" +
-      "display:flex;flex-direction:column;align-items:center;justify-content:center;" +
+    ov.style.cssText = "position:fixed;inset:0;z-index:99;background:#efece4;" +
+      "display:flex;flex-direction:column;align-items:center;justify-content:safe center;" +
       "gap:13px;padding:22px;text-align:center;overflow:auto";
     var card = document.getElementById("card");
     var snap = document.createElement("canvas");
@@ -228,6 +228,25 @@
     ov.appendChild(head); ov.appendChild(snap); ov.appendChild(line);
     ov.appendChild(os); ov.appendChild(close);
     document.body.appendChild(ov);
+  }
+
+  /*  REHEARSAL. ?rehearse on the URL adds one extra button that shows the
+   *  forged screen for the composed pair - nothing burns, no wallet needed.
+   *  For practising the walkthrough, not linked from anywhere. */
+  if (/[?&]rehearse/.test(location.search)){
+    var rb = document.createElement("button");
+    rb.textContent = "REHEARSE THE MOMENT (nothing burns)";
+    rb.style.marginTop = "9px";
+    rb.onclick = function(){
+      tokens().then(function(list){
+        var A = toId($("seedA").value, list), B = toId($("seedB").value, list);
+        if (!A || !B){ $("txlog").textContent = "compose a real pair first"; return; }
+        rpcBatch([{to:AM, data:SEL.totalMinted}]).then(function(r){
+          celebrate(A, B, (r[0] ? Number(BigInt(r[0])) : 1002) + 1);
+        });
+      });
+    };
+    host.appendChild(rb);
   }
 
   /*  Follow the preview, never lead it: re-check whenever the pair or the
