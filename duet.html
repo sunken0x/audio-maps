@@ -701,7 +701,9 @@ function drawCard(){
       var st = document.createElement("style");
       st.textContent = "#hud > *{display:none!important}" +
         "#hud > #playbtn,#hud > #stopbtn,#hud > #pos{display:inline-block!important}" +
-        "#title{display:none!important}";
+        "#title{display:none!important}" +
+        "html,body{background:transparent!important}" +
+        "#hud{background:none!important}";
       document.head.appendChild(st);
     }
     if (a && b) setTimeout(function(){ try { forge(); } catch(e){} }, 400);
