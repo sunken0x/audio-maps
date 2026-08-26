@@ -7,8 +7,14 @@
 /*  The forge gets a WIDER panel than the render card, because it has to show
     two things going in as well as the one coming out. Cramming that into the
     render card's column was the mistake this page exists to undo. */
-.panel{width:392px;flex:0 0 392px}
-#card{max-width:calc(100vw - 458px)}
+/*  Centered, one column, at every width - the card leads, the controls follow
+    beneath it, like the main page. The side-by-side layout read as lopsided on
+    a full screen. */
+body{flex-direction:column-reverse;align-items:center;justify-content:flex-end;
+ padding:26px 16px}
+.panel{width:min(660px,100%);flex:1 1 auto}
+#card{align-self:center;width:min(900px,100%);height:auto;max-width:100%;
+ max-height:76vh;object-fit:contain}
 .parent{border:1px solid var(--line);border-radius:3px;padding:9px 11px;
  background:rgba(22,22,29,.025)}
 .parent + .parent{margin-top:9px}
@@ -61,6 +67,10 @@
 
   <button id=swapAB>swap A and B</button>
 
+  <button class=go id=connect style="margin-top:10px">CONNECT WALLET</button>
+  <div id=owned></div>
+  <div class=hint id=walletHint hidden></div>
+
   <div class=arrow>↓</div>
 
   <div class=result>
@@ -82,10 +92,6 @@
     <button class=go id=dl style="margin-top:0">DOWNLOAD</button>
     <button id=share hidden>SHARE</button>
   </div>
-
-  <button id=connect style="margin-top:12px">CONNECT WALLET</button>
-  <div id=owned></div>
-  <div class=hint id=walletHint hidden></div>
 
   <div class=two style="margin-top:4px">
     <div style="flex:1">

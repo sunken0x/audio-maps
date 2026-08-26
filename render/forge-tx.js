@@ -74,8 +74,8 @@
     '<button class=go id=txforge disabled style="margin-top:9px">FORGE — BURN TWO, MINT ONE</button>' +
     '<div class=t id=txlog style="margin-top:7px"></div>' +
     '<div id=txresult></div>';
-  var hint = $("walletHint");
-  hint.parentNode.insertBefore(host, hint.nextSibling);
+  var anchor = $("rec").parentNode;   /* the play / record row */
+  anchor.parentNode.insertBefore(host, anchor.nextSibling);
 
   var acct = null, approved = false, ready = null;
 
