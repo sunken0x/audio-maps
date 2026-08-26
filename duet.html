@@ -704,11 +704,23 @@ function drawCard(){
         "#title{display:none!important}" +
         "html,body{background:transparent!important}" +
         "#hud{background:none!important}" +
-        "#cardcv{top:52px!important;height:calc(100vh - 62px)!important}";
+        "#cardcv{top:46px!important;bottom:auto!important;width:calc(100vw - 8px)!important;" +
+        "height:auto!important;max-width:none!important;max-height:none!important}";
       document.head.appendChild(st);
       try { $("fmt").value = "16:9"; } catch(e){}
     }
-    if (a && b) setTimeout(function(){ try { forge(); } catch(e){} }, 400);
+    if (a && b) setTimeout(function(){
+      try {
+        var pr = forge();
+        var re = function(){ try {
+          if (q.get("embed") !== null){
+            $("fmt").value = "16:9";
+            $("fmt").dispatchEvent(new Event("change"));
+          }
+        } catch(e){} };
+        if (pr && pr.then) pr.then(re); else re();
+      } catch(e){}
+    }, 400);
   } catch(e){}
 })();
 </script>

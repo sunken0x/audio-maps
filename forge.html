@@ -42,7 +42,7 @@
   .demo h2 { margin:0 0 4px; font-size:12px; letter-spacing:4px; font-weight:600;
              text-transform:uppercase; }
   #stage { margin-top:18px; display:none; }
-  #duetframe { display:block; margin:0 auto; width:100%; aspect-ratio:16/10.2;
+  #duetframe { display:block; margin:0 auto; width:100%;
                border:0; background:transparent; }
   #popout { display:inline-block; margin-top:8px; font-size:11px; color:var(--mute); }
   .chips { display:flex; flex-wrap:wrap; gap:8px; margin:14px 0 6px; }
@@ -331,7 +331,10 @@ function renderState(){
 function showPair(seedA, seedB){
   const url = "duet.html?a=" + seedA + "&b=" + seedB;
   $("stage").style.display = "block";
-  $("duetframe").src = url + "&embed";   /* render + play only, no lab controls */
+  const fr = $("duetframe");
+  fr.src = url + "&embed";               /* render + play only, no lab controls */
+  const size = () => { fr.style.height = Math.round(fr.clientWidth * 9/16 + 58) + "px"; };
+  size(); window.onresize = size;
   $("popout").href = url;                 /* full renderer in its own tab */
   $("stage").scrollIntoView({behavior:"smooth", block:"nearest"});
 }
