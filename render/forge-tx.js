@@ -185,16 +185,50 @@
           return l.address.toLowerCase() === FORGE.toLowerCase() && l.topics[0] === FORGED_TOPIC;
         });
         var id = log ? Number(BigInt(log.topics[1])) : ready.next;
-        $("txresult").innerHTML =
-          '<div class=t style="margin-top:9px"><b>FORGED.</b> ' + A.n + " and " + B.n +
-          " are gone. HORIZON #" + id + " is yours — its name is dealt from the " +
-          'parents’ seeds. <a target=_blank rel=noopener href="https://opensea.io/assets/ethereum/' +
-          AM + "/" + id + '">see it on OpenSea ↗</a></div>';
+        celebrate(A, B, id);
         $("txlog").textContent = "";
         refresh();
       })
       .catch(function(e){ $("txlog").textContent = String(e.message || e); $("txforge").disabled = false; });
   };
+
+  /*  THE MOMENT ITSELF. A burn with no acknowledgement reads as nothing
+   *  having happened, and something irreversible just did. Full screen: the
+   *  piece they made, what it cost, where it lives. */
+  function celebrate(A, B, id){
+    var ov = document.createElement("div");
+    ov.style.cssText = "position:fixed;inset:0;z-index:99;background:rgba(239,236,228,.98);" +
+      "display:flex;flex-direction:column;align-items:center;justify-content:center;" +
+      "gap:13px;padding:22px;text-align:center;overflow:auto";
+    var card = document.getElementById("card");
+    var snap = document.createElement("canvas");
+    var h = Math.min(560, Math.round(window.innerHeight * 0.52));
+    var w = Math.max(1, Math.round(card.width / card.height * h));
+    snap.width = w; snap.height = h;
+    try { snap.getContext("2d").drawImage(card, 0, 0, w, h); } catch(e){}
+    snap.style.cssText = "box-shadow:0 12px 60px rgba(22,22,29,.28);border-radius:2px;" +
+      "max-width:calc(100vw - 44px);height:auto";
+    var head = document.createElement("div");
+    head.style.cssText = "font-size:19px;font-weight:700;letter-spacing:.45em;margin-top:4px";
+    head.textContent = "FORGED";
+    var line = document.createElement("div");
+    line.style.cssText = "font-size:12px;color:var(--dim);line-height:1.8;max-width:52ch";
+    line.innerHTML = A.n + " and " + B.n + " are gone. Two became one.<br>" +
+      "<b style='color:var(--ink)'>HORIZON #" + id + "</b> is yours — its name is dealt " +
+      "from the seeds of the two that made it.";
+    var os = document.createElement("a");
+    os.href = "https://opensea.io/assets/ethereum/" + AM + "/" + id;
+    os.target = "_blank"; os.rel = "noopener";
+    os.style.cssText = "color:var(--ink);font-size:12px;letter-spacing:.08em";
+    os.textContent = "see it on OpenSea \u2197";
+    var close = document.createElement("button");
+    close.textContent = "CLOSE";
+    close.style.cssText = "width:auto;padding:10px 30px;letter-spacing:.2em;margin-top:2px";
+    close.onclick = function(){ ov.remove(); };
+    ov.appendChild(head); ov.appendChild(snap); ov.appendChild(line);
+    ov.appendChild(os); ov.appendChild(close);
+    document.body.appendChild(ov);
+  }
 
   /*  Follow the preview, never lead it: re-check whenever the pair or the
    *  wallet changes. */
