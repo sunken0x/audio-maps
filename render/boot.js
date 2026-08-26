@@ -801,23 +801,43 @@ try {
     else {
       const TT = "0x" + keccak256(utf8("Transfer(address,address,uint256)"));
       const acctTopic = "0x" + acct.slice(2).padStart(64, "0");
-      let logs = null, lastErr = null;
-      for (const u of RPCS){
-        try {
-          const r = await fetch(u, { method: "POST", headers: { "content-type": "application/json" },
-            body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "eth_getLogs",
-              params: [{ address: AUDIOMAPS, fromBlock: "0x189539d", toBlock: "latest",
-                          topics: [TT, null, acctTopic] }] }) });
-          const j = await r.json();
-          if (j.error) throw new Error(j.error.message);
-          logs = j.result; break;
-        } catch (e){ lastErr = e; }
+      /*  Free endpoints refuse a 60k-block log range but allow 10k, so the
+       *  history is read in windows. dRPC first - it states the 10k limit
+       *  plainly instead of failing mysteriously. */
+      const LOGS_RPCS = ["https://eth.drpc.org"].concat(RPCS);
+      const DEPLOY = 25777053, SPAN = 10000;
+      const logCall = async (u, m, prm) => {
+        const r = await fetch(u, { method: "POST", headers: { "content-type": "application/json" },
+          body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: m, params: prm }) });
+        const j = await r.json();
+        if (j.error) throw new Error(j.error.message);
+        return j.result;
+      };
+      let latest = null, li = 0;
+      for (; li < LOGS_RPCS.length; li++){
+        try { latest = Number(BigInt(await logCall(LOGS_RPCS[li], "eth_blockNumber", []))); break; }
+        catch (e){}
       }
-      if (!logs){
-        say("could not read the chain: " + (lastErr ? lastErr.message : "no endpoint would answer"));
+      const candSet = new Set(); let failed = latest === null ? new Error("no endpoint would answer") : null;
+      for (let from = DEPLOY; !failed && from <= latest; from += SPAN){
+        const to = Math.min(from + SPAN - 1, latest);
+        let got = null, err = null;
+        for (let t = 0; t < LOGS_RPCS.length && !got; t++){
+          const u = LOGS_RPCS[(li + t) % LOGS_RPCS.length];
+          try { got = await logCall(u, "eth_getLogs", [{ address: AUDIOMAPS,
+            fromBlock: "0x" + from.toString(16), toBlock: "0x" + to.toString(16),
+            topics: [TT, null, acctTopic] }]); }
+          catch (e){ err = e; }
+        }
+        if (!got){ failed = err; break; }
+        got.forEach(l => candSet.add(Number(BigInt(l.topics[3]))));
+        say("reading the wallet's history\u2026 " + Math.round((to - DEPLOY) / (latest - DEPLOY) * 100) + "\u0025");
+      }
+      if (failed){
+        say("could not read the chain: " + failed.message);
         $("connect").disabled = false; $("connect").textContent = "CONNECT WALLET"; return;
       }
-      const cand = [...new Set(logs.map(l => Number(BigInt(l.topics[3]))))];
+      const cand = [...candSet];
       say("checking " + cand.length + " candidate piece" + (cand.length === 1 ? "" : "s") + "\u2026");
       try {
         for (let i = 0; i < cand.length; i += 100){
