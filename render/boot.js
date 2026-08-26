@@ -787,33 +787,52 @@ try {
     $("connect").disabled = true;
     $("connect").textContent = acct.slice(0, 6) + "\u2026" + acct.slice(-4);
     say("looking through the collection for your pieces\u2026");
-    const ids = TOKENS.length ? TOKENS.map(t => t.i) : Array.from({length:1000}, (_,i) => i+1);
-    const mine = [];
-    let url = null;
-    for (const u of RPCS){ try { await batchOwners(u, [1]); url = u; break; } catch (e){} }
-    if (!url){ say("no endpoint would answer \u2014 type a name or number instead");
-               $("connect").disabled = false; $("connect").textContent = "CONNECT WALLET"; return; }
-    try {
-      /*  One endpoint rate-limits partway through twenty rapid batches, and
-       *  aborting there threw the whole connection away. So: rotate endpoints
-       *  on failure, retry, and breathe between batches. */
-      let ui = Math.max(0, RPCS.indexOf(url));
-      for (let i = 0; i < ids.length; i += 50){
-        const slice = ids.slice(i, i + 50);
-        let owners = null, lastErr = null;
-        for (let t = 0; t < RPCS.length * 2 && !owners; t++){
-          try { owners = await batchOwners(RPCS[ui], slice); }
-          catch (e){ lastErr = e; ui = (ui + 1) % RPCS.length;
-                     await new Promise(r => setTimeout(r, 400)); }
-        }
-        if (!owners) throw lastErr || new Error("no endpoint would answer");
-        owners.forEach((o, k) => { if (o === acct) mine.push(slice[k]); });
-        say(`checked ${Math.min(i+50, ids.length)} of ${ids.length}\u2026 ${mine.length} found`);
-        await new Promise(r => setTimeout(r, 150));
+    /*  Twenty batched sweeps of the whole collection rate-limited every
+     *  endpoint by the SECOND connect, which is why the first was fast and the
+     *  rest crawled. The chain already knows which pieces ever reached this
+     *  wallet: one log query for Transfer(*, wallet, *) since deploy, then one
+     *  ownership check over just those ids. Cached for ten minutes, so
+     *  reconnecting is instant. */
+    const CK = "am_owned_" + acct;
+    let mine = [];
+    let cached = null;
+    try { cached = JSON.parse(sessionStorage.getItem(CK) || "null"); } catch (e){}
+    if (cached && Date.now() - cached.t < 600000){ mine = cached.ids; }
+    else {
+      const TT = "0x" + keccak256(utf8("Transfer(address,address,uint256)"));
+      const acctTopic = "0x" + acct.slice(2).padStart(64, "0");
+      let logs = null, lastErr = null;
+      for (const u of RPCS){
+        try {
+          const r = await fetch(u, { method: "POST", headers: { "content-type": "application/json" },
+            body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "eth_getLogs",
+              params: [{ address: AUDIOMAPS, fromBlock: "0x189539d", toBlock: "latest",
+                          topics: [TT, null, acctTopic] }] }) });
+          const j = await r.json();
+          if (j.error) throw new Error(j.error.message);
+          logs = j.result; break;
+        } catch (e){ lastErr = e; }
       }
-    } catch (e){
-      say("could not finish reading ownership: " + e.message);
-      $("connect").disabled = false; $("connect").textContent = "CONNECT WALLET"; return;
+      if (!logs){
+        say("could not read the chain: " + (lastErr ? lastErr.message : "no endpoint would answer"));
+        $("connect").disabled = false; $("connect").textContent = "CONNECT WALLET"; return;
+      }
+      const cand = [...new Set(logs.map(l => Number(BigInt(l.topics[3]))))];
+      say("checking " + cand.length + " candidate piece" + (cand.length === 1 ? "" : "s") + "\u2026");
+      try {
+        for (let i = 0; i < cand.length; i += 100){
+          const slice = cand.slice(i, i + 100);
+          let owners = null, err2 = null;
+          for (const u of RPCS){ try { owners = await batchOwners(u, slice); break; } catch (e){ err2 = e; } }
+          if (!owners) throw err2 || new Error("no endpoint would answer");
+          owners.forEach((o, k) => { if (o === acct) mine.push(slice[k]); });
+        }
+      } catch (e){
+        say("could not finish reading ownership: " + e.message);
+        $("connect").disabled = false; $("connect").textContent = "CONNECT WALLET"; return;
+      }
+      mine.sort((a, b) => a - b);
+      try { sessionStorage.setItem(CK, JSON.stringify({ ids: mine, t: Date.now() })); } catch (e){}
     }
     OWNED = mine;
     const box = $("owned"); box.innerHTML = "";
