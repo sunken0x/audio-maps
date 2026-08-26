@@ -696,6 +696,14 @@ function drawCard(){
     const a = q.get("a"), b = q.get("b");
     if (a) $("a").value = a;
     if (b) $("b").value = b;
+    if (q.get("embed") !== null){
+      /* embed mode: the render and the play button, nothing else */
+      var st = document.createElement("style");
+      st.textContent = "#hud > *{display:none!important}" +
+        "#hud > #playbtn,#hud > #stopbtn,#hud > #pos{display:inline-block!important}" +
+        "#title{display:none!important}";
+      document.head.appendChild(st);
+    }
     if (a && b) setTimeout(function(){ try { forge(); } catch(e){} }, 400);
   } catch(e){}
 })();
