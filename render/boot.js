@@ -884,6 +884,71 @@ try {
     compose();
   };
 
+  /* ── forged pieces ────────────────────────────────────────────────────
+   *  A forged piece IS a pair: its parents are burned, but their seeds and
+   *  the parentage live in the forge contract forever. So a holder - or a
+   *  buyer who picked one up on secondary - types the token number or the
+   *  name and the page fetches the parents itself. Nobody should have to
+   *  work out what went into their own artwork.
+   *  Selectors derived with cast sig, never from memory. */
+  const FORGE_ADDR = "0x45Ac3a8da7cd547185Cba257DC2c0622a78F29dE";
+  const META_ADDR  = "0xf0498169B1B3cA7781385D836d91A32A8d77e42c";
+  const SEL_PARENTS = "26de059d", SEL_NAMEOF = "051a2664", SEL_MINTED = "a2309ff8";
+  let FORGED_LIST = null;
+  async function forgedIndex(){
+    if (FORGED_LIST) return FORGED_LIST;
+    let url = null, minted = null;
+    for (const u of RPCS){
+      try { minted = Number(BigInt(await rpc(AUDIOMAPS, SEL_MINTED, u))); url = u; break; }
+      catch (e){}
+    }
+    if (minted === null) return (FORGED_LIST = []);
+    const ids = []; for (let i = 1001; i <= minted; i++) ids.push(i);
+    if (!ids.length) return (FORGED_LIST = []);
+    const body = [];
+    ids.forEach((id, k) => {
+      body.push({ jsonrpc:"2.0", id: k*2,   method:"eth_call",
+        params:[{ to: FORGE_ADDR, data: "0x" + SEL_PARENTS + BigInt(id).toString(16).padStart(64,"0") }, "latest"] });
+      body.push({ jsonrpc:"2.0", id: k*2+1, method:"eth_call",
+        params:[{ to: META_ADDR, data: "0x" + SEL_NAMEOF + BigInt(id).toString(16).padStart(64,"0") }, "latest"] });
+    });
+    try {
+      const r = await fetch(url, { method:"POST", headers:{ "content-type":"application/json" },
+                                   body: JSON.stringify(body) });
+      const j = await r.json();
+      const byId = {}; j.forEach(x => byId[x.id] = x.result);
+      FORGED_LIST = ids.map((id, k) => {
+        const pr = byId[k*2], nm = byId[k*2+1];
+        if (!pr) return null;
+        const a = Number(BigInt("0x" + pr.slice(2, 66))), b = Number(BigInt("0x" + pr.slice(66, 130)));
+        let n = "Forged #" + id;
+        if (nm){ try {
+          const off = Number(BigInt("0x" + nm.slice(2, 66)));
+          const len = Number(BigInt("0x" + nm.slice(2 + off*2, 2 + off*2 + 64)));
+          const hexs = nm.slice(2 + off*2 + 64, 2 + off*2 + 64 + len*2);
+          n = decodeURIComponent(hexs.replace(/(..)/g, "%$1"));
+        } catch(e){} }
+        return { i: id, n: n, a: a, b: b };
+      }).filter(Boolean);
+    } catch (e){ FORGED_LIST = []; }
+    return FORGED_LIST;
+  }
+  async function forgedLookup(raw){
+    raw = (raw || "").trim();
+    if (!raw) return null;
+    const num = raw.replace(/^#/, "");
+    const isNum = /^\d{4}$/.test(num) && +num > 1000;
+    if (!isNum && !/[A-Za-z]/.test(raw)) return null;
+    const list = await forgedIndex();
+    let hit = null;
+    if (isNum) hit = list.find(t => t.i === +num);
+    else { const up = raw.toUpperCase(); hit = list.find(t => t.n.toUpperCase() === up); }
+    if (!hit) return null;
+    await loadTokens();
+    const label = id => { const t = TOKENS && TOKENS.find(x => x.i === id); return t ? t.n : String(id); };
+    return { i: hit.i, n: hit.n, pa: label(hit.a), pb: label(hit.b) };
+  }
+
   // ── compose ─────────────────────────────────────────────────────────────
   let timer = null;
   async function compose(){
@@ -893,7 +958,15 @@ try {
      *  field into two - the forge has its own pair of inputs, because that is
      *  what the thing actually is: two pieces going in. */
     if (MODE === "duet"){
-      const ra = $("seedA").value.trim(), rb = $("seedB").value.trim();
+      let ra = $("seedA").value.trim(), rb = $("seedB").value.trim();
+      /*  A forged piece in either box expands to its parents - the duet you
+       *  hear IS that piece, reproducible forever from the recorded seeds. */
+      const fg = (await forgedLookup(ra)) || (await forgedLookup(rb));
+      if (fg){
+        $("seedA").value = fg.pa; $("seedB").value = fg.pb;
+        say(fg.n + " was forged from " + fg.pa + " and " + fg.pb + " \u2014 loading both");
+        ra = fg.pa; rb = fg.pb;
+      }
       if (!ra || !rb){ say("the forge needs two pieces"); return; }
       say("looking both up\u2026");
       let A, B;
