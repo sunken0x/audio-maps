@@ -884,6 +884,18 @@ try {
     compose();
   };
 
+  /*  Deep links: forge.html?a=<piece>&b=<piece>&go=1 arrives composed. Used by
+   *  the render card's forged-piece handover, and shareable on its own. */
+  if (MODE === "duet"){
+    try {
+      const q = new URLSearchParams(location.search);
+      const qa = q.get("a"), qb = q.get("b");
+      if (qa) $("seedA").value = qa;
+      if (qb) $("seedB").value = qb;
+      if (qa && qb && q.get("go")) setTimeout(() => { try { compose(); } catch (e){} }, 500);
+    } catch (e){}
+  }
+
   /* ── forged pieces ────────────────────────────────────────────────────
    *  A forged piece IS a pair: its parents are burned, but their seeds and
    *  the parentage live in the forge contract forever. So a holder - or a
@@ -1016,6 +1028,17 @@ try {
     pB = null;
     const raw = $("seed").value.trim();
     if (!raw){ say("type a piece name or number"); return; }
+    /*  A forged piece typed into the ordinary render box just works: the page
+     *  looks up its parents on chain and hands over to the forge renderer
+     *  with both loaded. A buyer on secondary should never have to know what
+     *  went into their own artwork to show it off. */
+    const fgs = await forgedLookup(raw);
+    if (fgs){
+      say(fgs.n + " is a forged duet \u2014 opening it with both parents loaded");
+      location.href = "forge.html?a=" + encodeURIComponent(fgs.pa) +
+                      "&b=" + encodeURIComponent(fgs.pb) + "&go=1";
+      return;
+    }
 
     /*  ONE resolver for both tabs, so a piece name works everywhere a number
      *  does. It used to be duplicated here and understood only numbers, ENS and
