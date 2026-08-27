@@ -1008,9 +1008,20 @@ try {
         return;
       }
       seedAddr = A.addr; seedLabel = A.label + "  \u00d7  " + B.label;
+      /*  If this exact pair was already forged, this IS that piece - so say
+       *  its name. A duet with no name is anonymous; the whole point of the
+       *  render is showing off the piece you own. */
+      let mintedHit = null;
+      try {
+        const fl = await forgedIndex();
+        mintedHit = fl.find(t => t.a === A.id && t.b === B.id) || null;
+      } catch (e){}
+      if (mintedHit) seedLabel = mintedHit.n + "  \u00b7  " + seedLabel;
       p = AM125.derive(A.addr); pB = AM125.derive(B.addr);
       showIngredient("ingA", A, p, A.rare); showIngredient("ingB", B, pB, B.rare);
-      $("forgedName").textContent = A.label + " \u00d7 " + B.label;
+      $("forgedName").textContent = mintedHit
+        ? mintedHit.n + " \u00b7 #" + mintedHit.i
+        : A.label + " \u00d7 " + B.label;
       $("forgedTraits").innerHTML =
         `${p.motif.name} bass over ${pB.motif.name} top<br>${p.tempo} bpm \u00b7 ` +
         `${p.scheme.name} \u2192 ${pB.scheme.name}`;
